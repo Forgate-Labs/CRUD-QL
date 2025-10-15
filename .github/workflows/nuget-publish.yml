@@ -8,8 +8,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    environment: secrets
 
     steps:
       - uses: actions/checkout@v4
@@ -28,4 +27,6 @@ jobs:
         run: dotnet pack CrudQL/CrudQL.Service/CrudQL.Service.csproj --configuration Release --no-build --output out
 
       - name: Publish package to NuGet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: dotnet nuget push out/*.nupkg --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
