@@ -23,4 +23,8 @@
     <Using Include="NUnit.Framework" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\CrudQL.Service\CrudQL.Service.csproj" />
+  </ItemGroup>
+
 </Project>
