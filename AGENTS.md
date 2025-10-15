@@ -13,7 +13,7 @@
 
 ## Collaboration Workflow
 - Backlog intake: the user requests a new task, collaborates on gathering requirements, and we create the issue in Project 2 with status Backlog once the information set is complete.
-- Planning stage: create branch `task/{issue-id}` from `main`, outline the implementation plan, author the required BDD scenarios and bindings, and submit the plan for user approval; upon approval move the issue to Planned and record the test files that need implementation in the issue description.
+- Planning stage: create branch `task/{issue-id}` from `main`, outline the implementation plan, author the required BDD scenarios and bindings (fully defined and implemented), and submit the plan for user approval; upon approval move the issue to Planned, record the test files that need implementation in the issue description, and append the approved plan text to the issue description; subsequent stages may not modify the approved scenarios or bindings.
 - Readiness gate: after technical and business validation, move the issue card to Ready.
 - Delivery stage: pull the first Ready issue, move it to In Progress, implement the work, run tests, commit with the issue ID in the message, push to origin, and shift the issue to In review.
 
