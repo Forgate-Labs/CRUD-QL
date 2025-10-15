@@ -1,0 +1,31 @@
+name: Publish NuGet Package
+
+on:
+  push:
+    branches:
+      - nuget
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore CrudQL/CrudQL.sln
+
+      - name: Build solution
+        run: dotnet build CrudQL/CrudQL.sln --configuration Release --no-restore
+
+      - name: Pack service project
+        run: dotnet pack CrudQL/CrudQL.Service/CrudQL.Service.csproj --configuration Release --no-build --output out
+
+      - name: Publish package to NuGet
+        run: dotnet nuget push out/*.nupkg --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
