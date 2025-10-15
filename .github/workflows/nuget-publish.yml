@@ -9,13 +9,27 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: secrets
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Fetch main branch
+        run: git fetch origin main
+
+      - name: Extract package version
+        id: package_version
+        run: |
+          version=$(grep -oPm1 '(?<=<Version>)[^<]+' CrudQL/CrudQL.Service/CrudQL.Service.csproj)
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "PACKAGE_VERSION=$version" >> $GITHUB_ENV
 
       - name: Restore dependencies
         run: dotnet restore CrudQL/CrudQL.sln
@@ -30,3 +44,36 @@ jobs:
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: dotnet nuget push out/*.nupkg --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+
+      - name: Generate release notes
+        run: |
+          version="${PACKAGE_VERSION:-${{ steps.package_version.outputs.version }}}"
+          changes=$(git log origin/main..HEAD --pretty=format:'- %h %s' || true)
+          {
+            echo "Automated release for version v$version."
+            echo
+            echo "## Changes since main"
+            if [ -n "$changes" ]; then
+              printf '%s\n' "$changes"
+            else
+              echo "- No changes compared to main."
+            fi
+          } > release-notes.md
+
+      - name: Tag release
+        run: |
+          version="${{ steps.package_version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "v$version"
+          git push origin "refs/tags/v$version" --force
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.package_version.outputs.version }}
+          name: v${{ steps.package_version.outputs.version }}
+          body_path: release-notes.md
+          files: out/*.nupkg
