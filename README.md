@@ -31,7 +31,7 @@ This automatically enables endpoints such as:
 
 - `GET /crud`
 - `POST /crud`
-- `PATCH /crud`
+- `PUT /crud`
 - `DELETE /crud`
 
 ---

@@ -6,6 +6,17 @@
 - `CrudQL/CrudQL.Tests/` hosts Reqnroll feature files and step bindings; mirror the service namespace structure so that each capability has matching specs.
 - `bin/` and `obj/` directories are build artifacts—never commit them.
 
+## Project Task Management
+- Treat GitHub Project 2 as the authoritative backlog; review its items to decide what to work on next.
+- Represent every planned task as a real repository issue in `eduardofacunha/CRUD-QL` and link it to Project 2, avoiding draft-only project items.
+- When planning wraps up for a new task, create the corresponding issue immediately and place it in Project 2 with the appropriate status.
+
+## Collaboration Workflow
+- Backlog intake: the user requests a new task, collaborates on gathering requirements, and we create the issue in Project 2 with status Backlog once the information set is complete.
+- Planning stage: create branch `task/{issue-id}` from `main`, outline the implementation plan, author the required BDD scenarios and bindings, and submit the plan for user approval; upon approval move the issue to Planned and record the test files that need implementation in the issue description.
+- Readiness gate: after technical and business validation, move the issue card to Ready.
+- Delivery stage: pull the first Ready issue, move it to In Progress, implement the work, run tests, commit with the issue ID in the message, push to origin, and shift the issue to In review.
+
 ## Build, Test, and Development Commands
 - `dotnet restore CrudQL/CrudQL.sln` — restore all solution dependencies; run after pulling new packages.
 - `dotnet build CrudQL/CrudQL.sln` — compile the service and tests; add `-c Release` before publishing artifacts.
