@@ -4,7 +4,7 @@
 ## 🚀 Overview
 
 **CRUD-QL** is an entity-oriented query builder for **ASP.NET Core** and **EF Core** that provides universal endpoints for  
-`query`, `create`, `update`, and `delete` — without manually writing resolvers.
+`create`, `read`, `update`, and `delete` — without manually writing resolvers.
 
 It includes:
 
@@ -29,10 +29,10 @@ builder.Services.AddCrudQl()
 
 This automatically enables endpoints such as:
 
-- `POST /crud/query`
-- `POST /crud/create`
-- `POST /crud/update`
-- `POST /crud/delete`
+- `GET /crud`
+- `POST /crud`
+- `PATCH /crud`
+- `DELETE /crud`
 
 ---
 
@@ -50,10 +50,10 @@ CRUD-QL is organized into **five main layers**:
 
 ## 📦 JSON-QL Examples
 
-### Query
+### Read
 ```json
 {
-  "operation": "query",
+  "operation": "read",
   "entity": "Product",
   "select": ["id", "name", "price", { "category": ["id", "title"] }],
   "filter": {
@@ -121,7 +121,7 @@ Validators automatically run in the `Create`, `Update`, and `Delete` pipelines.
 ## ⚙️ Execution Pipeline
 
 ### High-Level Steps
-1. Authenticate request (JWT / cookie)
+1. Authenticate request (JWT / cookie / OAuth)
 2. Parse and validate schema
 3. Authorize operation and fields
 4. Run validation (FluentValidation)
@@ -274,4 +274,4 @@ CrudQl/
 ## 📜 License
 
 MIT © 2025 – Forgate Labs  
-Built with ❤️ by [Eduardo Facunha](https://forgategames.com.br)
+Built with ❤️ by [Eduardo Cunha]

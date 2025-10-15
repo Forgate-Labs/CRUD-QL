@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36202.13 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrudQL.Service", "CrudQL.Service\CrudQL.Service.csproj", "{5BBC179E-A2B2-480C-8363-95B6EEBB1AEE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5BBC179E-A2B2-480C-8363-95B6EEBB1AEE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5BBC179E-A2B2-480C-8363-95B6EEBB1AEE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5BBC179E-A2B2-480C-8363-95B6EEBB1AEE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5BBC179E-A2B2-480C-8363-95B6EEBB1AEE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {EFEE3EC6-9687-4D82-8FEA-DC8EDE1E7193}
+	EndGlobalSection
+EndGlobal
