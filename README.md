@@ -3,7 +3,7 @@
 
 ## 🚀 Overview
 
-**CRUD-QL** is an entity-oriented query builder for **ASP.NET Core** and **EF Core** that provides universal endpoints for  
+**CRUD-QL** is an entity-oriented query builder for **ASP.NET Core** and **EF Core** that provides a unique endpoint for  
 `create`, `read`, `update`, and `delete` — without manually writing resolvers.
 
 It includes:
@@ -236,7 +236,7 @@ app.Run();
 
 ## 🧪 Development Roadmap
 
-### MVP (2–3 weeks)
+### MVP
 - JSON-QL parser + CRUD operations  
 - AuthN/AuthZ (RBAC/ABAC)  
 - FluentValidation integration  
