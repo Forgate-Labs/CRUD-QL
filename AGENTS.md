@@ -18,6 +18,27 @@
 - Delivery stage: pull the first Ready issue, move it to In Progress, implement the work, run tests, commit with the issue ID in the message, push to origin, and shift the issue to In review.
 - Review stage: once an issue moves to In review, open a pull request from the task branch to main so reviewers can begin validation.
 
+### Planning Response Template
+```
+Plan for issue #<id>
+
+Implementation Plan
+1. ...
+2. ...
+
+BDD Scenarios
+- CrudQL/CrudQL.Tests/Features/<FeatureName>.feature
+  Scenario: <title>
+    Given ...
+    When ...
+    Then ...
+
+Bindings
+- CrudQL/CrudQL.Tests/Bindings/<BindingName>.cs
+```
+
+Always include the complete Given/When/Then steps for every scenario listed.
+
 ## Build, Test, and Development Commands
 - `dotnet restore CrudQL/CrudQL.sln` — restore all solution dependencies; run after pulling new packages.
 - `dotnet build CrudQL/CrudQL.sln` — compile the service and tests; add `-c Release` before publishing artifacts.
@@ -41,6 +62,8 @@
 ## Commit & Pull Request Guidelines
 - Follow the existing imperative style (`Enhance README…`, `Add validator`) and keep subject lines under 72 characters.
 - Bundle related changes in a single commit; avoid mixing refactors and feature work without clear justification.
+- Pull request descriptions must include the following sections in order: `## Summary`, `## Testing`, and `## Deployment/Rollback`.
 - Pull requests should summarize scope, link related issues, and list validation steps (build, tests, coverage runs).
 - Include screenshots or sample payloads when modifying transport-layer behavior so reviewers can validate the contract quickly.
 - Issues, commits, and pull requests can be created using the `gh` command in Bash.
+- Always end the pull request description with the line `Close #{issue-number}` to ensure the issue is closed automatically on merge.
