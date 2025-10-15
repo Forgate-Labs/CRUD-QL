@@ -27,11 +27,17 @@ Implementation Plan
 2. ...
 
 BDD Scenarios
-- CrudQL/CrudQL.Tests/Features/<FeatureName>.feature — Scenario: <title>
+- CrudQL/CrudQL.Tests/Features/<FeatureName>.feature
+  Scenario: <title>
+    Given ...
+    When ...
+    Then ...
 
 Bindings
 - CrudQL/CrudQL.Tests/Bindings/<BindingName>.cs
 ```
+
+Always include the complete Given/When/Then steps for every scenario listed.
 
 ## Build, Test, and Development Commands
 - `dotnet restore CrudQL/CrudQL.sln` — restore all solution dependencies; run after pulling new packages.
