@@ -27,4 +27,8 @@
     <ProjectReference Include="..\CrudQL.Service\CrudQL.Service.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
 </Project>
