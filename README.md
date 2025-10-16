@@ -1,5 +1,6 @@
-# CRUD-QL
-> A reimagined GraphQL built for CRUD simplicity — with built-in authentication, authorization, and validation.
+# .Net CRUD-QL 
+
+[![NuGet Version](https://img.shields.io/nuget/v/Reqnroll)](https://www.nuget.org/packages/CrudQL.Service)
 
 ## 🚀 Overview
 

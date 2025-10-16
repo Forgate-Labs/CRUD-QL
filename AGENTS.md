@@ -10,6 +10,7 @@
 - Treat GitHub Project 2 as the authoritative backlog; review its items to decide what to work on next.
 - Represent every planned task as a real repository issue in `eduardofacunha/CRUD-QL` and link it to Project 2, avoiding draft-only project items.
 - When planning wraps up for a new task, create the corresponding issue immediately and place it in Project 2 with the appropriate status.
+- Ensure every newly created issue is added to GitHub Project 2 and assigned the Backlog status.
 
 ## Collaboration Workflow
 - Backlog intake: the user requests a new task, collaborates on gathering requirements, and we create the issue in Project 2 with status Backlog once the information set is complete.
