@@ -3,4 +3,4 @@ Feature: CrudQL endpoint mapping POST
     Given a web application instance
     When I map CrudQL with MapCrudQl
     Then the endpoint set should contain /crud for POST
-    And calling the /crud endpoint for POST should return ok
+    And calling the /crud endpoint for POST with the documented payload should return ok

@@ -13,6 +13,7 @@
 - Ensure every newly created issue is added to GitHub Project 2 and assigned the Backlog status.
 
 ## Collaboration Workflow
+- Treat the beginning of every chat session as a new task entering the pipeline; follow the backlog intake and planning process unless the user explicitly calls out a hotfix during that same session.
 - Backlog intake: the user requests a new task, collaborates on gathering requirements, and we create the issue in Project 2 with status Backlog once the information set is complete.
 - Planning stage: create branch `task/{issue-id}` from `main`, outline the implementation plan, author the required BDD scenarios and bindings (fully defined and implemented), communicate the full plan and BDD scenarios in chat, and submit the plan for user approval; upon approval move the issue to Planned, record the test files that need implementation in the issue description, append the approved plan text to the issue description, and commit/push the planning artifacts to origin; subsequent stages may not modify the approved scenarios or bindings.
 - Readiness gate: after technical and business validation, move the issue card to Ready.

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using CrudQL.Service.Routing;
 using Microsoft.AspNetCore.Builder;
@@ -19,6 +20,33 @@ public class CrudQlEndpointMappingSteps
     private IReadOnlyList<RouteEndpoint>? endpoints;
     private Exception? capturedException;
     private RouteEndpoint? selectedEndpoint;
+    private static readonly IReadOnlyDictionary<string, string> SamplePayloads =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [HttpMethods.Get] =
+                """
+                {
+                  "entity": "Product",
+                  "select": ["id", "name", "price", { "category": ["id", "title"] }],
+                  "filter": {
+                    "and": [
+                      { "field": "price", "op": "gte", "value": 10.0 },
+                      { "field": "name", "op": "contains", "value": "pro" }
+                    ]
+                  },
+                  "orderBy": [{ "field": "price", "dir": "desc" }],
+                  "page": { "size": 20 }
+                }
+                """,
+            [HttpMethods.Post] =
+                """
+                {
+                  "entity": "Product",
+                  "input": { "name": "Mouse Pro", "price": 129.9, "categoryId": 3 },
+                  "returning": ["id", "name", "price"]
+                }
+                """
+        };
 
     [Given("a web application instance")]
     public void GivenAWebApplicationInstance()
@@ -87,7 +115,7 @@ public class CrudQlEndpointMappingSteps
         Assert.That(capturedException, Is.TypeOf<ArgumentNullException>(), "Expected ArgumentNullException to be thrown");
     }
 
-    [Then("calling the /crud endpoint for (.*) should return ok")]
+    [Then("calling the /crud endpoint for (.*?)(?: with the documented payload)? should return ok")]
     public async Task ThenCallingTheCrudEndpointForVerbShouldReturnOk(string verb)
     {
         Assert.That(selectedEndpoint, Is.Not.Null, "Endpoint must be selected before invoking");
@@ -101,6 +129,18 @@ public class CrudQlEndpointMappingSteps
         httpContext.RequestServices = new ServiceCollection()
             .AddLogging()
             .BuildServiceProvider();
+
+        if (SamplePayloads.TryGetValue(httpContext.Request.Method, out var payload))
+        {
+            var payloadBytes = Encoding.UTF8.GetBytes(payload);
+            httpContext.Request.Body = new MemoryStream(payloadBytes, writable: false);
+            httpContext.Request.ContentLength = payloadBytes.LongLength;
+            httpContext.Request.ContentType = "application/json";
+        }
+        else
+        {
+            httpContext.Request.Body = new MemoryStream();
+        }
 
         await requestDelegate!(httpContext);
 
