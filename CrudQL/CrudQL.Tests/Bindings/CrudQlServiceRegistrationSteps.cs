@@ -8,14 +8,21 @@ namespace CrudQL.Tests.Bindings;
 [Binding]
 public class CrudQlServiceRegistrationSteps
 {
+    private readonly ScenarioContext scenarioContext;
     private IServiceCollection? services;
     private object? builder;
     private Type? builderType;
+
+    public CrudQlServiceRegistrationSteps(ScenarioContext scenarioContext)
+    {
+        this.scenarioContext = scenarioContext;
+    }
 
     [Given("an empty service collection")]
     public void GivenAnEmptyServiceCollection()
     {
         services = new ServiceCollection();
+        scenarioContext["services"] = services;
     }
 
     [When("I configure CrudQL via AddCrudQl")]
@@ -29,6 +36,8 @@ public class CrudQlServiceRegistrationSteps
         Assert.That(method, Is.Not.Null, "AddCrudQl extension method not found");
         builder = method.Invoke(null, new object[] { services! });
         builderType = builder?.GetType();
+        scenarioContext["builder"] = builder;
+        scenarioContext["builderType"] = builderType;
     }
 
     [Then("the AddCrudQl call should return the CrudQL builder")]
