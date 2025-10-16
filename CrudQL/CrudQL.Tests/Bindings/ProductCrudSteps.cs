@@ -1,15 +1,18 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Linq;
 using System.Threading.Tasks;
 using CrudQL.Service.DependencyInjection;
 using CrudQL.Service.Routing;
 using CrudQL.Tests.TestAssets;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
@@ -27,55 +30,73 @@ public sealed class ProductCrudSteps : IDisposable
     private readonly Dictionary<string, TrackedProduct> products = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> updated = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> deleted = new(StringComparer.OrdinalIgnoreCase);
-    private WebApplicationFactory<ProductCrudTestProgram>? factory;
+    private TestServer? server;
     private HttpClient? client;
-    private IReadOnlyList<ProductDocument>? lastProducts;
+    private IReadOnlyList<ProductRecord>? lastProducts;
 
     [Given("the product catalog is empty")]
     public void GivenTheProductCatalogIsEmpty()
     {
         Dispose();
-        factory = new ProductCrudApplicationFactory();
-        client = factory.CreateClient();
+        var hostBuilder = new WebHostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddLogging();
+                services.AddRouting();
+                services.AddDbContext<FakeDbContext>(options => options.UseInMemoryDatabase($"Products_{Guid.NewGuid()}"));
+                services.AddCrudQl().AddEntitiesFromDbContext<FakeDbContext>();
+            })
+            .Configure(app =>
+            {
+                app.UseRouting();
+                app.UseEndpoints(endpoints =>
+                {
+                    endpoints.MapCrudQl();
+                });
+            });
+
+        server = new TestServer(hostBuilder);
+        client = server.CreateClient();
         products.Clear();
         updated.Clear();
         deleted.Clear();
         lastProducts = null;
     }
 
-    [When("I create the following products through POST /products")]
-    public async Task WhenICreateTheFollowingProductsThroughPostProducts(Table table)
+    [When(@"I create the following products through POST \/crud")]
+    public async Task WhenICreateTheFollowingProductsThroughPostCrud(Table table)
     {
-        Assert.That(client, Is.Not.Null);
+        var currentClient = EnsureClient();
         foreach (var row in table.Rows)
         {
-            var request = new CreateProductRequest(
-                row["Name"],
-                row["Description"],
-                decimal.Parse(row["Price"], CultureInfo.InvariantCulture),
-                row["Currency"]);
-            var response = await client!.PostAsJsonAsync("/products", request, jsonOptions);
+            var payload = new CreatePayload(
+                "Product",
+                new ProductInput(
+                    row["Name"],
+                    row["Description"],
+                    decimal.Parse(row["Price"], CultureInfo.InvariantCulture),
+                    row["Currency"]),
+                new[] { "id", "name", "description", "price", "currency" });
+            var response = await currentClient.PostAsJsonAsync("/crud", payload, jsonOptions);
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
-            var product = await response.Content.ReadFromJsonAsync<ProductDocument>(jsonOptions);
-            Assert.That(product, Is.Not.Null);
-            products[product!.Name] = new TrackedProduct(
-                product.Id,
-                product.Name,
-                product.Description,
-                product.Price,
-                product.Currency);
+            var document = await response.Content.ReadFromJsonAsync<SingleResponse>(jsonOptions);
+            Assert.That(document, Is.Not.Null);
+            var record = document!.Data;
+            products[record.Name] = new TrackedProduct(record.Id, record.Name, record.Description, record.Price, record.Currency);
         }
     }
 
-    [When("I GET /products")]
-    public async Task WhenIGetProducts()
+    [When(@"I GET \/crud for Product")]
+    public async Task WhenIGetCrudForProduct()
     {
-        Assert.That(client, Is.Not.Null);
-        var response = await client!.GetAsync("/products");
+        var currentClient = EnsureClient();
+        var selectFields = new[] { "id", "name", "description", "price", "currency" };
+        var query = string.Join("&", selectFields.Select(field => $"select={Uri.EscapeDataString(field)}"));
+        var response = await currentClient.GetAsync($"/crud?entity=Product&{query}");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        var collection = await response.Content.ReadFromJsonAsync<List<ProductDocument>>(jsonOptions);
+        var collection = await response.Content.ReadFromJsonAsync<CollectionResponse>(jsonOptions);
         Assert.That(collection, Is.Not.Null);
-        lastProducts = collection!;
+        lastProducts = collection!.Data;
     }
 
     [Then("the response contains 10 products with the same names in any order")]
@@ -83,26 +104,35 @@ public sealed class ProductCrudSteps : IDisposable
     {
         Assert.That(lastProducts, Is.Not.Null);
         Assert.That(lastProducts!, Has.Count.EqualTo(10));
-        var actualNames = lastProducts!.Select(p => p.Name).ToList();
+        var actualNames = lastProducts!.Select(product => product.Name).ToList();
         Assert.That(actualNames, Is.EquivalentTo(products.Keys));
     }
 
-    [When("I update the following products through PUT /products/{id}")]
-    public async Task WhenIUpdateTheFollowingProductsThroughPutProductsId(Table table)
+    [When(@"I update the following products through PUT \/crud")]
+    public async Task WhenIUpdateTheFollowingProductsThroughPutCrud(Table table)
     {
-        Assert.That(client, Is.Not.Null);
+        var currentClient = EnsureClient();
         foreach (var row in table.Rows)
         {
             var name = row["Name"];
             Assert.That(products.TryGetValue(name, out var tracked), Is.True);
-            var payload = new UpdateProductRequest(
-                row["NewDescription"],
-                decimal.Parse(row["NewPrice"], CultureInfo.InvariantCulture));
-            var response = await client!.PutAsJsonAsync($"/products/{tracked!.Id}", payload, jsonOptions);
+            var payload = new UpdatePayload(
+                "Product",
+                new ProductKey(tracked!.Id),
+                new UpdateInput(
+                    row["NewDescription"],
+                    decimal.Parse(row["NewPrice"], CultureInfo.InvariantCulture)),
+                new[] { "id", "name", "description", "price", "currency" });
+            var message = new HttpRequestMessage(HttpMethod.Put, "/crud")
+            {
+                Content = JsonContent.Create(payload, options: jsonOptions)
+            };
+            var response = await currentClient.SendAsync(message);
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            var product = await response.Content.ReadFromJsonAsync<ProductDocument>(jsonOptions);
-            Assert.That(product, Is.Not.Null);
-            tracked.ApplyUpdate(product!.Description, product.Price);
+            var document = await response.Content.ReadFromJsonAsync<SingleResponse>(jsonOptions);
+            Assert.That(document, Is.Not.Null);
+            var record = document!.Data;
+            tracked.ApplyUpdate(record.Description, record.Price);
             updated.Add(name);
         }
     }
@@ -114,7 +144,7 @@ public sealed class ProductCrudSteps : IDisposable
         foreach (var row in table.Rows)
         {
             var name = row["Name"];
-            var match = lastProducts!.SingleOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+            var match = lastProducts!.SingleOrDefault(product => string.Equals(product.Name, name, StringComparison.OrdinalIgnoreCase));
             Assert.That(match, Is.Not.Null);
             Assert.That(match!.Description, Is.EqualTo(row["Description"]));
             Assert.That(match.Price, Is.EqualTo(decimal.Parse(row["Price"], CultureInfo.InvariantCulture)));
@@ -132,21 +162,21 @@ public sealed class ProductCrudSteps : IDisposable
                 continue;
             }
 
-            var match = lastProducts!.Single(p => string.Equals(p.Name, tracked.Name, StringComparison.OrdinalIgnoreCase));
+            var match = lastProducts!.Single(product => string.Equals(product.Name, tracked.Name, StringComparison.OrdinalIgnoreCase));
             Assert.That(match.Description, Is.EqualTo(tracked.OriginalDescription));
             Assert.That(match.Price, Is.EqualTo(tracked.OriginalPrice));
         }
     }
 
-    [When("I delete the following products through DELETE /products/{id}")]
-    public async Task WhenIDeleteTheFollowingProductsThroughDeleteProductsId(Table table)
+    [When(@"I delete the following products through DELETE \/crud")]
+    public async Task WhenIDeleteTheFollowingProductsThroughDeleteCrud(Table table)
     {
-        Assert.That(client, Is.Not.Null);
+        var currentClient = EnsureClient();
         foreach (var row in table.Rows)
         {
             var name = row["Name"];
             Assert.That(products.TryGetValue(name, out var tracked), Is.True);
-            var response = await client!.DeleteAsync($"/products/{tracked!.Id}");
+            var response = await currentClient.DeleteAsync($"/crud?entity=Product&id={tracked!.Id}");
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
             deleted.Add(name);
             products.Remove(name);
@@ -164,7 +194,7 @@ public sealed class ProductCrudSteps : IDisposable
     public void ThenTheResponseDoesNotIncludeTheDeletedProductNames()
     {
         Assert.That(lastProducts, Is.Not.Null);
-        var names = lastProducts!.Select(p => p.Name).ToList();
+        var names = lastProducts!.Select(product => product.Name).ToList();
         foreach (var name in deleted)
         {
             Assert.That(names, Does.Not.Contain(name));
@@ -174,27 +204,15 @@ public sealed class ProductCrudSteps : IDisposable
     public void Dispose()
     {
         client?.Dispose();
-        factory?.Dispose();
+        server?.Dispose();
         client = null;
-        factory = null;
+        server = null;
     }
 
-    private sealed class ProductCrudApplicationFactory : WebApplicationFactory<ProductCrudTestProgram>
+    private HttpClient EnsureClient()
     {
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.ConfigureServices(services =>
-            {
-                services.AddLogging();
-                services.AddDbContext<FakeDbContext>(options => options.UseInMemoryDatabase($"Products_{Guid.NewGuid()}"));
-                services.AddCrudQl().AddEntitiesFromDbContext<FakeDbContext>();
-            });
-
-            builder.Configure(app =>
-            {
-                app.MapCrudQl();
-            });
-        }
+        Assert.That(client, Is.Not.Null);
+        return client!;
     }
 
     private sealed class TrackedProduct
@@ -225,13 +243,20 @@ public sealed class ProductCrudSteps : IDisposable
         }
     }
 
-    private sealed record CreateProductRequest(string Name, string Description, decimal Price, string Currency);
+    private sealed record ProductRecord(int Id, string Name, string Description, decimal Price, string Currency);
 
-    private sealed record UpdateProductRequest(string Description, decimal Price);
+    private sealed record SingleResponse(ProductRecord Data);
 
-    private sealed record ProductDocument(int Id, string Name, string Description, decimal Price, string Currency);
-}
+    private sealed record CollectionResponse(List<ProductRecord> Data);
 
-public sealed class ProductCrudTestProgram
-{
+    private sealed record ProductInput(string Name, string Description, decimal Price, string Currency);
+
+    private sealed record ProductKey(int Id);
+
+    private sealed record CreatePayload(string Entity, ProductInput Input, string[] Returning);
+
+    private sealed record UpdateInput(string Description, decimal Price);
+
+    private sealed record UpdatePayload(string Entity, ProductKey Key, UpdateInput Input, string[] Returning);
+
 }

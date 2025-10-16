@@ -5,6 +5,7 @@
 - `CrudQL/CrudQL.Service/` hosts the core .NET 8 library; keep new source files under coherent folders (e.g., `Authorization/`, `Validation/`) as features mature.
 - `CrudQL/CrudQL.Tests/` hosts Reqnroll feature files and step bindings; mirror the service namespace structure so that each capability has matching specs.
 - `bin/` and `obj/` directories are build artifacts—never commit them.
+- The platform exposes a single HTTP entry point: `/crud`. No additional routes may be introduced; every entity operation must flow through `/crud` using the generic CrudQL JSON payloads.
 
 ## Project Task Management
 - Treat GitHub Project 2 as the authoritative backlog; review its items to decide what to work on next.

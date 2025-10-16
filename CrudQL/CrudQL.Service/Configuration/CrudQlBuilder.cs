@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -17,6 +18,7 @@ public class CrudQlBuilder : ICrudQlBuilder
     {
         Services = services;
         entityRegistry = EnsureRegistry(services);
+        EnsureRuntimeStore(services);
     }
 
     public IServiceCollection Services { get; }
@@ -90,5 +92,15 @@ public class CrudQlBuilder : ICrudQlBuilder
         var registry = new CrudEntityRegistry();
         services.AddSingleton<ICrudEntityRegistry>(registry);
         return registry;
+    }
+
+    private static void EnsureRuntimeStore(IServiceCollection services)
+    {
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(CrudRuntimeStore)))
+        {
+            return;
+        }
+
+        services.AddSingleton<CrudRuntimeStore>();
     }
 }

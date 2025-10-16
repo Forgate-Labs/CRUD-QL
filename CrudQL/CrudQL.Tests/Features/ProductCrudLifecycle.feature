@@ -3,7 +3,7 @@ Feature: Product CRUD lifecycle
   @regression @products
   Scenario: CRUD lifecycle for multiple products
     Given the product catalog is empty
-    When I create the following products through POST /products
+    When I create the following products through POST /crud
       | Name           | Description           | Price | Currency |
       | Aurora Lamp    | Desk lighting         | 49.99 | USD      |
       | Borealis Chair | Ergonomic seating     | 129.0 | USD      |
@@ -15,23 +15,23 @@ Feature: Product CRUD lifecycle
       | Halo Speaker   | Smart home audio      | 159.0 | USD      |
       | Ion Bottle     | Vacuum water bottle   | 27.5  | USD      |
       | Jolt Charger   | 65W USB-C charger     | 42.0  | USD      |
-    And I GET /products
+    And I GET /crud for Product
     Then the response contains 10 products with the same names in any order
-    When I update the following products through PUT /products/{id}
+    When I update the following products through PUT /crud
       | Name          | NewDescription        | NewPrice |
       | Equinox Watch | Sapphire crystal case | 279.0    |
       | Flux Backpack | Added laptop sleeve   | 149.0    |
-    And I GET /products
+    And I GET /crud for Product
     Then the response contains the updated products
       | Name          | Description           | Price |
       | Equinox Watch | Sapphire crystal case | 279.0 |
       | Flux Backpack | Added laptop sleeve   | 149.0 |
     And the remaining products keep their original description and price
-    When I delete the following products through DELETE /products/{id}
+    When I delete the following products through DELETE /crud
       | Name        |
       | Aurora Lamp |
       | Comet Mug   |
       | Glimmer Pen |
-    And I GET /products
+    And I GET /crud for Product
     Then the response contains 7 products
     And the response does not include the deleted product names
