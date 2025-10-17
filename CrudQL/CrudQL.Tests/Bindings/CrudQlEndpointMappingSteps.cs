@@ -75,11 +75,9 @@ public class CrudQlEndpointMappingSteps
             {
                 return false;
             }
-
             var methodMetadata = endpoint.Metadata.GetMetadata<HttpMethodMetadata>();
             return methodMetadata?.HttpMethods.Any(httpMethod => string.Equals(httpMethod, verb, StringComparison.OrdinalIgnoreCase)) == true;
         });
-
         Assert.That(matches, Is.Not.Empty, $"No endpoint matched /crud for {verb}");
         selectedEndpoint = matches.First();
     }
