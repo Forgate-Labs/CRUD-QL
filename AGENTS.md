@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Command Execution
+- Always execute all repository commands using Bash.
+
 ## Project Structure & Module Organization
 - `CrudQL/CrudQL.sln` is the entry point that ties together the service library and test suite.
 - `CrudQL/CrudQL.Service/` hosts the core .NET 8 library; keep new source files under coherent folders (e.g., `Authorization/`, `Validation/`) as features mature.
@@ -59,4 +62,4 @@ Always include the complete Given/When/Then steps for every scenario listed.
 ## Commit & Pull Request Guidelines
 - Bundle related changes in a single commit; avoid mixing refactors and feature work without clear justification.
 - Whenever preparing a pull request, include a bulleted section aimed at end users that highlights the key library changes.
-- Commits and pull requests can be created using the `gh` command in Bash.
+- Commits and pull requests can be created using the `gh` command in Bash, and always pass `--fill` when creating pull requests.
