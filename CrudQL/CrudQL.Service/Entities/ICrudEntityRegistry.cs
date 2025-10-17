@@ -10,7 +10,9 @@ public interface ICrudEntityRegistry
 
     void RegisterEntity(Type entityType);
 
-    void RegisterEntitySetResolver(Type entityType, Func<IServiceProvider, object> resolver);
+    void RegisterEntitySetResolver(Type entityType, Func<IServiceProvider, object> setResolver, Func<IServiceProvider, DbContext> contextResolver);
 
     DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class;
+
+    bool TryGetEntity(string entityName, out CrudEntityRegistration registration);
 }

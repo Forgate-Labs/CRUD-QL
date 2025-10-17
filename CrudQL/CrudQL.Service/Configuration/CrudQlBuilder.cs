@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Entities;
-using CrudQL.Service.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -18,9 +17,7 @@ public class CrudQlBuilder : ICrudQlBuilder
     {
         Services = services;
         entityRegistry = EnsureRegistry(services);
-        EnsureRuntimeStore(services);
     }
-
     public IServiceCollection Services { get; }
 
     public ICrudQlBuilder AddEntity<TEntity>()
@@ -55,11 +52,14 @@ public class CrudQlBuilder : ICrudQlBuilder
             return;
         }
 
-        entityRegistry.RegisterEntitySetResolver(entityType, provider =>
-        {
-            var dbContext = (DbContext)provider.GetRequiredService(dbContextType);
-            return ResolveDbSet(entityType, dbContext);
-        });
+        entityRegistry.RegisterEntitySetResolver(
+            entityType,
+            provider =>
+            {
+                var dbContext = (DbContext)provider.GetRequiredService(dbContextType);
+                return ResolveDbSet(entityType, dbContext);
+            },
+            provider => (DbContext)provider.GetRequiredService(dbContextType));
     }
 
     private static object ResolveDbSet(Type entityType, DbContext dbContext)
@@ -92,15 +92,5 @@ public class CrudQlBuilder : ICrudQlBuilder
         var registry = new CrudEntityRegistry();
         services.AddSingleton<ICrudEntityRegistry>(registry);
         return registry;
-    }
-
-    private static void EnsureRuntimeStore(IServiceCollection services)
-    {
-        if (services.Any(descriptor => descriptor.ServiceType == typeof(CrudRuntimeStore)))
-        {
-            return;
-        }
-
-        services.AddSingleton<CrudRuntimeStore>();
     }
 }

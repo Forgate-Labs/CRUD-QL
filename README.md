@@ -54,7 +54,6 @@ CRUD-QL is organized into **five main layers**:
 ### Read
 ```json
 {
-  "operation": "read",
   "entity": "Product",
   "select": ["id", "name", "price", { "category": ["id", "title"] }],
   "filter": {
@@ -71,12 +70,23 @@ CRUD-QL is organized into **five main layers**:
 ### Create
 ```json
 {
-  "operation": "create",
   "entity": "Product",
-  "input": { "name": "Mouse Pro", "price": 129.9, "categoryId": 3 },
-  "returning": ["id", "name", "price"]
+  "input": { "name": "Mouse Pro", "description": "Wireless", "price": 129.9, "currency": "USD" },
+  "returning": ["id", "name", "description", "price", "currency"]
 }
 ```
+
+### Update
+```json
+{
+  "entity": "Product",
+  "condition": { "field": "id", "op": "eq", "value": 42 },
+  "input": { "description": "Low profile 60%", "price": 430.0 },
+  "update": ["id", "name", "description", "price", "currency"]
+}
+```
+
+`condition` mirrors the GET filter contract and `update` controls which fields the update response should project.
 
 ---
 

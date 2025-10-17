@@ -9,6 +9,7 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
 {
     private readonly object gate = new();
     private readonly Dictionary<Type, CrudEntityRegistration> registrations = new();
+    private readonly Dictionary<string, CrudEntityRegistration> registrationsByName = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyCollection<CrudEntityRegistration> Entities
     {
@@ -27,30 +28,40 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
 
         lock (gate)
         {
-            if (!registrations.ContainsKey(entityType))
+            if (registrations.ContainsKey(entityType))
             {
-                registrations[entityType] = new CrudEntityRegistration(entityType.Name, entityType);
+                return;
             }
+
+            var registration = new CrudEntityRegistration(entityType.Name, entityType);
+            registrations[entityType] = registration;
+            registrationsByName[registration.EntityName] = registration;
         }
     }
 
-    public void RegisterEntitySetResolver(Type entityType, Func<IServiceProvider, object> resolver)
+    public void RegisterEntitySetResolver(Type entityType, Func<IServiceProvider, object> setResolver, Func<IServiceProvider, DbContext> contextResolver)
     {
         ArgumentNullException.ThrowIfNull(entityType);
-        ArgumentNullException.ThrowIfNull(resolver);
+        ArgumentNullException.ThrowIfNull(setResolver);
+        ArgumentNullException.ThrowIfNull(contextResolver);
 
         lock (gate)
         {
             if (registrations.TryGetValue(entityType, out var existing))
             {
-                registrations[entityType] = existing with { ResolveSet = resolver };
+                var updated = existing with { ResolveSet = setResolver, ResolveContext = contextResolver };
+                registrations[entityType] = updated;
+                registrationsByName[updated.EntityName] = updated;
                 return;
             }
 
-            registrations[entityType] = new CrudEntityRegistration(entityType.Name, entityType)
+            var registration = new CrudEntityRegistration(entityType.Name, entityType)
             {
-                ResolveSet = resolver
+                ResolveSet = setResolver,
+                ResolveContext = contextResolver
             };
+            registrations[entityType] = registration;
+            registrationsByName[registration.EntityName] = registration;
         }
     }
 
@@ -76,5 +87,15 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         }
 
         throw new InvalidOperationException($"Resolver for entity {typeof(TEntity).Name} did not return a DbSet");
+    }
+
+    public bool TryGetEntity(string entityName, out CrudEntityRegistration registration)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(entityName);
+
+        lock (gate)
+        {
+            return registrationsByName.TryGetValue(entityName, out registration!);
+        }
     }
 }
