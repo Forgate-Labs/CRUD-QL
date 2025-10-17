@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CrudQL.Service.Configuration;
@@ -8,5 +9,5 @@ public interface ICrudQlBuilder
 
     ICrudQlBuilder AddEntity<TEntity>();
 
-    ICrudQlBuilder AddEntitiesFromDbContext<TContext>();
+    ICrudQlBuilder AddEntitiesFromDbContext<TContext>() where TContext : DbContext;
 }
