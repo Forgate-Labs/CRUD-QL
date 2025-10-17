@@ -73,10 +73,23 @@ CRUD-QL is organized into **five main layers**:
 {
   "operation": "create",
   "entity": "Product",
-  "input": { "name": "Mouse Pro", "price": 129.9, "categoryId": 3 },
-  "returning": ["id", "name", "price"]
+  "input": { "name": "Mouse Pro", "description": "Wireless", "price": 129.9, "currency": "USD" },
+  "returning": ["id", "name", "description", "price", "currency"]
 }
 ```
+
+### Update
+```json
+{
+  "operation": "update",
+  "entity": "Product",
+  "key": { "id": 42 },
+  "input": { "description": "Low profile 60%", "price": 430.0 },
+  "update": ["id", "name", "description", "price", "currency"]
+}
+```
+
+`update` controls the projection of fields returned by the update response.
 
 ---
 

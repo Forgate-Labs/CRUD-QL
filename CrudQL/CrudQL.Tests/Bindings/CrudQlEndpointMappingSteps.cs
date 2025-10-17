@@ -4,10 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using CrudQL.Service.DependencyInjection;
 using CrudQL.Service.Routing;
+using CrudQL.Tests.TestAssets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using Reqnroll;
@@ -22,6 +25,7 @@ public class CrudQlEndpointMappingSteps
     private Exception? capturedException;
     private RouteEndpoint? selectedEndpoint;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private string? databaseName;
 
     [Given("a web application instance")]
     public void GivenAWebApplicationInstance()
@@ -96,16 +100,23 @@ public class CrudQlEndpointMappingSteps
         var requestDelegate = selectedEndpoint!.RequestDelegate;
         Assert.That(requestDelegate, Is.Not.Null, "Endpoint does not expose a request delegate");
 
-        var serviceProvider = new ServiceCollection()
-            .AddLogging()
-            .AddSingleton<CrudRuntimeStore>()
-            .BuildServiceProvider();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddRouting();
+        databaseName = $"CrudEndpoint_{Guid.NewGuid()}";
+        services.AddDbContext<FakeDbContext>(options => options.UseInMemoryDatabase(databaseName));
+        services.AddCrudQl()
+            .AddEntity<Product>()
+            .AddEntitiesFromDbContext<FakeDbContext>();
+
+        using var serviceProvider = services.BuildServiceProvider();
 
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Method = verb.ToUpperInvariant();
         httpContext.Request.Path = "/crud";
         httpContext.Response.Body = new MemoryStream();
-        httpContext.RequestServices = serviceProvider;
+        using var requestScope = serviceProvider.CreateScope();
+        httpContext.RequestServices = requestScope.ServiceProvider;
 
         int? seededId = null;
         if (RequiresExistingEntity(httpContext.Request.Method))
@@ -175,7 +186,8 @@ public class CrudQlEndpointMappingSteps
         seedContext.Request.Method = HttpMethods.Post;
         seedContext.Request.Path = "/crud";
         seedContext.Response.Body = new MemoryStream();
-        seedContext.RequestServices = services;
+        using var requestScope = services.CreateScope();
+        seedContext.RequestServices = requestScope.ServiceProvider;
 
         var seedPayload = new
         {
@@ -207,8 +219,8 @@ public class CrudQlEndpointMappingSteps
             return new
             {
                 entity = "Product",
-                input = new { name = "Mouse Pro", price = 129.9M, categoryId = 3 },
-                returning = new[] { "id", "name", "price" }
+                input = new { name = "Mouse Pro", price = 129.9M, description = "Wireless", currency = "USD" },
+                returning = new[] { "id", "name", "price", "currency" }
             };
         }
 
@@ -228,8 +240,8 @@ public class CrudQlEndpointMappingSteps
             {
                 entity = "Product",
                 key = new { id = entityId.Value },
-                input = new { price = 149.9M },
-                returning = new[] { "id", "price" }
+                input = new { price = 149.9M, description = "Updated" },
+                update = new[] { "id", "price", "description" }
             };
         }
 

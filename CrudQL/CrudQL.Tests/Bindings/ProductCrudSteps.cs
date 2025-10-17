@@ -33,6 +33,7 @@ public sealed class ProductCrudSteps : IDisposable
     private TestServer? server;
     private HttpClient? client;
     private IReadOnlyList<ProductRecord>? lastProducts;
+    private string? databaseName;
 
     [Given("the product catalog is empty")]
     public void GivenTheProductCatalogIsEmpty()
@@ -43,8 +44,9 @@ public sealed class ProductCrudSteps : IDisposable
             {
                 services.AddLogging();
                 services.AddRouting();
-                services.AddDbContext<FakeDbContext>(options => options.UseInMemoryDatabase($"Products_{Guid.NewGuid()}"));
-                services.AddCrudQl().AddEntitiesFromDbContext<FakeDbContext>();
+                databaseName = $"Products_{Guid.NewGuid()}";
+                services.AddDbContext<FakeDbContext>(options => options.UseInMemoryDatabase(databaseName));
+                services.AddCrudQl().AddEntity<Product>().AddEntitiesFromDbContext<FakeDbContext>();
             })
             .Configure(app =>
             {
