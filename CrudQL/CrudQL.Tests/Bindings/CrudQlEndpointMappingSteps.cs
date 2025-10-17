@@ -91,6 +91,7 @@ public class CrudQlEndpointMappingSteps
     [Then(@"calling the \/crud endpoint for (.*?)(?: with the documented payload)? should return ok")]
     public async Task ThenCallingTheCrudEndpointForVerbShouldReturnOk(string verb)
     {
+        verb = verb.Trim();
         Assert.That(selectedEndpoint, Is.Not.Null, "Endpoint must be selected before invoking");
         var requestDelegate = selectedEndpoint!.RequestDelegate;
         Assert.That(requestDelegate, Is.Not.Null, "Endpoint does not expose a request delegate");
