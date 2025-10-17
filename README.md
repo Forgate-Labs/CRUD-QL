@@ -83,13 +83,13 @@ CRUD-QL is organized into **five main layers**:
 {
   "operation": "update",
   "entity": "Product",
-  "key": { "id": 42 },
+  "condition": { "field": "id", "op": "eq", "value": 42 },
   "input": { "description": "Low profile 60%", "price": 430.0 },
   "update": ["id", "name", "description", "price", "currency"]
 }
 ```
 
-`update` controls the projection of fields returned by the update response.
+`condition` mirrors the GET filter contract and `update` controls which fields the update response should project.
 
 ---
 

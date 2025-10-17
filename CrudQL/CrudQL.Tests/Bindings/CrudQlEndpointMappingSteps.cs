@@ -239,7 +239,7 @@ public class CrudQlEndpointMappingSteps
             return new
             {
                 entity = "Product",
-                key = new { id = entityId.Value },
+                condition = new { field = "id", op = "eq", value = entityId.Value },
                 input = new { price = 149.9M, description = "Updated" },
                 update = new[] { "id", "price", "description" }
             };

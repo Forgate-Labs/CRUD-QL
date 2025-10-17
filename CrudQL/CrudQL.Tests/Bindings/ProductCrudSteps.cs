@@ -127,7 +127,7 @@ public sealed class ProductCrudSteps : IDisposable
             Assert.That(products.TryGetValue(name, out var tracked), Is.True);
             var payload = new UpdatePayload(
                 "Product",
-                new ProductKey(tracked!.Id),
+                new ConditionPayload("id", "eq", tracked!.Id),
                 new UpdateInput(
                     row["NewDescription"],
                     decimal.Parse(row["NewPrice"], CultureInfo.InvariantCulture)),
@@ -282,12 +282,12 @@ public sealed class ProductCrudSteps : IDisposable
 
     private sealed record ProductInput(string Name, string Description, decimal Price, string Currency);
 
-    private sealed record ProductKey(int Id);
-
     private sealed record CreatePayload(string Entity, ProductInput Input, string[] Returning);
 
     private sealed record UpdateInput(string Description, decimal Price);
 
-    private sealed record UpdatePayload(string Entity, ProductKey Key, UpdateInput Input, string[] Update);
+    private sealed record ConditionPayload(string Field, string Op, object Value);
+
+    private sealed record UpdatePayload(string Entity, ConditionPayload Condition, UpdateInput Input, string[] Update);
 
 }
