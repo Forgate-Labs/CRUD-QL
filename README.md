@@ -54,7 +54,6 @@ CRUD-QL is organized into **five main layers**:
 ### Read
 ```json
 {
-  "operation": "read",
   "entity": "Product",
   "select": ["id", "name", "price", { "category": ["id", "title"] }],
   "filter": {
@@ -71,7 +70,6 @@ CRUD-QL is organized into **five main layers**:
 ### Create
 ```json
 {
-  "operation": "create",
   "entity": "Product",
   "input": { "name": "Mouse Pro", "description": "Wireless", "price": 129.9, "currency": "USD" },
   "returning": ["id", "name", "description", "price", "currency"]
@@ -81,7 +79,6 @@ CRUD-QL is organized into **five main layers**:
 ### Update
 ```json
 {
-  "operation": "update",
   "entity": "Product",
   "condition": { "field": "id", "op": "eq", "value": 42 },
   "input": { "description": "Low profile 60%", "price": 430.0 },
