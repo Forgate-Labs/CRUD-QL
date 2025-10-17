@@ -89,8 +89,14 @@ public sealed class ProductCrudSteps : IDisposable
     [When(@"I GET \/crud for Product")]
     public async Task WhenIGetCrudForProduct()
     {
+        await WhenIGetCrudForProductSelecting("id,name,description,price,currency");
+    }
+
+    [When(@"I GET \/crud for Product selecting (.+)")]
+    public async Task WhenIGetCrudForProductSelecting(string fields)
+    {
         var currentClient = EnsureClient();
-        var selectFields = new[] { "id", "name", "description", "price", "currency" };
+        var selectFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var query = string.Join("&", selectFields.Select(field => $"select={Uri.EscapeDataString(field)}"));
         var response = await currentClient.GetAsync($"/crud?entity=Product&{query}");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
@@ -108,10 +114,11 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(actualNames, Is.EquivalentTo(products.Keys));
     }
 
-    [When(@"I update the following products through PUT \/crud")]
-    public async Task WhenIUpdateTheFollowingProductsThroughPutCrud(Table table)
+    [When(@"I update the following products through PUT \/crud specifying update fields (.+)")]
+    public async Task WhenIUpdateTheFollowingProductsThroughPutCrud(string fields, Table table)
     {
         var currentClient = EnsureClient();
+        var updateFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var row in table.Rows)
         {
             var name = row["Name"];
@@ -122,7 +129,7 @@ public sealed class ProductCrudSteps : IDisposable
                 new UpdateInput(
                     row["NewDescription"],
                     decimal.Parse(row["NewPrice"], CultureInfo.InvariantCulture)),
-                new[] { "id", "name", "description", "price", "currency" });
+                updateFields);
             var message = new HttpRequestMessage(HttpMethod.Put, "/crud")
             {
                 Content = JsonContent.Create(payload, options: jsonOptions)
@@ -165,6 +172,28 @@ public sealed class ProductCrudSteps : IDisposable
             var match = lastProducts!.Single(product => string.Equals(product.Name, tracked.Name, StringComparison.OrdinalIgnoreCase));
             Assert.That(match.Description, Is.EqualTo(tracked.OriginalDescription));
             Assert.That(match.Price, Is.EqualTo(tracked.OriginalPrice));
+        }
+    }
+
+    [Then("the EF Core store matches the response payload")]
+    public void ThenTheEfCoreStoreMatchesTheResponsePayload()
+    {
+        Assert.That(lastProducts, Is.Not.Null);
+        using var scope = server!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<FakeDbContext>();
+        var records = dbContext.Products
+            .AsNoTracking()
+            .Select(product => new ProductRecord(product.Id, product.Name, product.Description, product.Price, product.Currency))
+            .ToList();
+        Assert.That(records, Has.Count.EqualTo(lastProducts!.Count));
+        foreach (var product in lastProducts!)
+        {
+            var match = records.SingleOrDefault(record => record.Id == product.Id);
+            Assert.That(match, Is.Not.Null, $"Product with id {product.Id} not found in EF Core store");
+            Assert.That(match!.Name, Is.EqualTo(product.Name));
+            Assert.That(match.Description, Is.EqualTo(product.Description));
+            Assert.That(match.Price, Is.EqualTo(product.Price));
+            Assert.That(match.Currency, Is.EqualTo(product.Currency));
         }
     }
 
@@ -257,6 +286,6 @@ public sealed class ProductCrudSteps : IDisposable
 
     private sealed record UpdateInput(string Description, decimal Price);
 
-    private sealed record UpdatePayload(string Entity, ProductKey Key, UpdateInput Input, string[] Returning);
+    private sealed record UpdatePayload(string Entity, ProductKey Key, UpdateInput Input, string[] Update);
 
 }
