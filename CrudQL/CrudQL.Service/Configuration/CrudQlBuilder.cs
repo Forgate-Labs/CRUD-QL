@@ -22,7 +22,18 @@ public class CrudQlBuilder : ICrudQlBuilder
 
     public ICrudQlBuilder AddEntity<TEntity>()
     {
+        return AddEntity<TEntity>(null);
+    }
+
+    public ICrudQlBuilder AddEntity<TEntity>(Action<CrudEntityBuilder<TEntity>>? configure)
+    {
         entityRegistry.RegisterEntity(typeof(TEntity));
+
+        if (configure != null)
+        {
+            var configurator = new CrudEntityBuilder<TEntity>(entityRegistry);
+            configure(configurator);
+        }
 
         if (dbContextType != null)
         {

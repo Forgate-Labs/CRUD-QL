@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CrudQL.Service.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace CrudQL.Service.Entities;
@@ -59,6 +60,29 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
             {
                 ResolveSet = setResolver,
                 ResolveContext = contextResolver
+            };
+            registrations[entityType] = registration;
+            registrationsByName[registration.EntityName] = registration;
+        }
+    }
+
+    public void SetPolicy(Type entityType, ICrudPolicy? policy)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+
+        lock (gate)
+        {
+            if (registrations.TryGetValue(entityType, out var existing))
+            {
+                var updated = existing with { Policy = policy };
+                registrations[entityType] = updated;
+                registrationsByName[updated.EntityName] = updated;
+                return;
+            }
+
+            var registration = new CrudEntityRegistration(entityType.Name, entityType)
+            {
+                Policy = policy
             };
             registrations[entityType] = registration;
             registrationsByName[registration.EntityName] = registration;

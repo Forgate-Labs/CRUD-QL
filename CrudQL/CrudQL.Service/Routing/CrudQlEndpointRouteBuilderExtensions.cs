@@ -10,6 +10,8 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Security.Claims;
+using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -52,6 +54,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         if (!TryResolveRegistration(context, registry, entityName, out var registration, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (!CrudEntityExecutor.TryAuthorize(context, registration, CrudAction.Create, out error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -107,6 +115,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
+        if (!CrudEntityExecutor.TryAuthorize(context, registration, CrudAction.Read, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
         if (!CrudEntityExecutor.TryResolveQueryable(context, registration, out var queryable, out error))
         {
             await error!.ExecuteAsync(context);
@@ -136,6 +150,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         if (!TryResolveRegistration(context, registry, entityName, out var registration, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (!CrudEntityExecutor.TryAuthorize(context, registration, CrudAction.Update, out error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -206,6 +226,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         if (!TryResolveRegistration(context, registry, entityName, out var registration, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (!CrudEntityExecutor.TryAuthorize(context, registration, CrudAction.Delete, out error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -399,6 +425,30 @@ public static class CrudQlEndpointRouteBuilderExtensions
             .First(method => method.Name == nameof(Queryable.Where) && method.GetParameters().Length == 2);
         private static readonly MethodInfo ToListAsyncMethodDefinition = typeof(EntityFrameworkQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(method => method.Name == nameof(EntityFrameworkQueryableExtensions.ToListAsync) && method.GetParameters().Length == 2);
+
+        public static bool TryAuthorize(HttpContext context, CrudEntityRegistration registration, CrudAction action, out IResult? error)
+        {
+            var policy = registration.Policy;
+            if (policy == null)
+            {
+                error = null;
+                return true;
+            }
+
+            var user = context.User ?? new ClaimsPrincipal();
+            if (policy.IsAuthorized(user, action))
+            {
+                error = null;
+                return true;
+            }
+
+            error = Results.Json(
+                new { message = $"User is not authorized to perform {action} on {registration.EntityName}" },
+                SerializerOptions,
+                null,
+                StatusCodes.Status401Unauthorized);
+            return false;
+        }
 
         public static bool TryResolveDbContext(HttpContext context, CrudEntityRegistration registration, out DbContext dbContext, out IResult? error)
         {
