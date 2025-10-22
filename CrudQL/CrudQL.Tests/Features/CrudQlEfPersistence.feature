@@ -6,7 +6,7 @@ Feature: CRUD over EF Core persistence
       | Keyboard   | Mechanical 60%    | 450   | BRL      |
       | Headphones | Noise cancelling  | 899   | BRL      |
       | Laptop     | Ultrabook 14      | 7200  | BRL      |
-    And I update the following products through PUT /crud specifying update fields id,name,description,price,currency
+    And I update the following products through PUT /crud
       | Name       | NewDescription  | NewPrice |
       | Keyboard   | Low profile 60% | 430      |
       | Headphones | ANC over-ear    | 879      |
@@ -16,4 +16,5 @@ Feature: CRUD over EF Core persistence
       | Keyboard   | Low profile 60%  | 430   |
       | Headphones | ANC over-ear     | 879   |
     And the remaining products keep their original description and price
+    And each update response reports 1 affected row
     And the EF Core store matches the response payload

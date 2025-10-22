@@ -30,6 +30,7 @@ public sealed class ProductCrudSteps : IDisposable
     private readonly Dictionary<string, TrackedProduct> products = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> updated = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> deleted = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<int> updateResponses = new();
     private TestServer? server;
     private HttpClient? client;
     private IReadOnlyList<ProductRecord>? lastProducts;
@@ -62,6 +63,7 @@ public sealed class ProductCrudSteps : IDisposable
         products.Clear();
         updated.Clear();
         deleted.Clear();
+        updateResponses.Clear();
         lastProducts = null;
     }
 
@@ -116,34 +118,42 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(actualNames, Is.EquivalentTo(products.Keys));
     }
 
-    [When(@"I update the following products through PUT \/crud specifying update fields (.+)")]
-    public async Task WhenIUpdateTheFollowingProductsThroughPutCrud(string fields, Table table)
+    [When(@"I update the following products through PUT \/crud")]
+    public async Task WhenIUpdateTheFollowingProductsThroughPutCrud(Table table)
     {
         var currentClient = EnsureClient();
-        var updateFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var row in table.Rows)
         {
             var name = row["Name"];
             Assert.That(products.TryGetValue(name, out var tracked), Is.True);
+            var newDescription = row["NewDescription"];
+            var newPrice = decimal.Parse(row["NewPrice"], CultureInfo.InvariantCulture);
             var payload = new UpdatePayload(
                 "Product",
                 new ConditionPayload("id", "eq", tracked!.Id),
-                new UpdateInput(
-                    row["NewDescription"],
-                    decimal.Parse(row["NewPrice"], CultureInfo.InvariantCulture)),
-                updateFields);
+                new UpdateChanges(
+                    newDescription,
+                    newPrice));
             var message = new HttpRequestMessage(HttpMethod.Put, "/crud")
             {
                 Content = JsonContent.Create(payload, options: jsonOptions)
             };
             var response = await currentClient.SendAsync(message);
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            var document = await response.Content.ReadFromJsonAsync<SingleResponse>(jsonOptions);
+            var document = await response.Content.ReadFromJsonAsync<UpdateResponse>(jsonOptions);
             Assert.That(document, Is.Not.Null);
-            var record = document!.Data;
-            tracked.ApplyUpdate(record.Description, record.Price);
+            Assert.That(document!.AffectedRows, Is.EqualTo(1));
+            updateResponses.Add(document.AffectedRows);
+            tracked.ApplyUpdate(newDescription, newPrice);
             updated.Add(name);
         }
+    }
+
+    [Then("each update response reports 1 affected row")]
+    public void ThenEachUpdateResponseReportsOneAffectedRow()
+    {
+        Assert.That(updateResponses, Is.Not.Empty);
+        Assert.That(updateResponses, Has.All.EqualTo(1));
     }
 
     [Then("the response contains the updated products")]
@@ -284,10 +294,12 @@ public sealed class ProductCrudSteps : IDisposable
 
     private sealed record CreatePayload(string Entity, ProductInput Input, string[] Returning);
 
-    private sealed record UpdateInput(string Description, decimal Price);
+    private sealed record UpdateChanges(string Description, decimal Price);
 
     private sealed record ConditionPayload(string Field, string Op, object Value);
 
-    private sealed record UpdatePayload(string Entity, ConditionPayload Condition, UpdateInput Input, string[] Update);
+    private sealed record UpdatePayload(string Entity, ConditionPayload Condition, UpdateChanges Update);
+
+    private sealed record UpdateResponse(int AffectedRows);
 
 }

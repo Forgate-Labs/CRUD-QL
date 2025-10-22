@@ -147,9 +147,9 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
-        if (!root.Value.TryGetProperty("input", out var inputElement) || inputElement.ValueKind != JsonValueKind.Object)
+        if (!root.Value.TryGetProperty("update", out var updateElement) || updateElement.ValueKind != JsonValueKind.Object)
         {
-            await Results.BadRequest(new { message = "Missing 'input' object for update operation" }).ExecuteAsync(context);
+            await Results.BadRequest(new { message = "Missing 'update' object for update operation" }).ExecuteAsync(context);
             return;
         }
 
@@ -159,7 +159,6 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
-        var updateFields = GetStringArray(root.Value, "update");
         if (!CrudEntityExecutor.TryResolveDbContext(context, registration, out var dbContext, out error))
         {
             await error!.ExecuteAsync(context);
@@ -175,7 +174,7 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         foreach (var match in matches)
         {
-            if (!CrudEntityExecutor.TryApplyInput(match, inputElement, out error))
+            if (!CrudEntityExecutor.TryApplyUpdate(match, updateElement, out error))
             {
                 await error!.ExecuteAsync(context);
                 return;
@@ -183,8 +182,8 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         await dbContext.SaveChangesAsync(context.RequestAborted);
-        var projection = CrudEntityExecutor.Project(matches[0], updateFields);
-        await Results.Json(new { data = projection }, SerializerOptions).ExecuteAsync(context);
+        var affectedRows = matches.Count;
+        await Results.Json(new { affectedRows }, SerializerOptions).ExecuteAsync(context);
     }
 
     private static async Task HandleDelete(HttpContext context, [FromServices] ICrudEntityRegistry registry)
@@ -716,10 +715,10 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return typeof(IComparable).IsAssignableFrom(type);
         }
 
-        public static bool TryApplyInput(object entity, JsonElement input, out IResult? error)
+        public static bool TryApplyUpdate(object entity, JsonElement update, out IResult? error)
         {
             var metadata = GetMetadata(entity.GetType());
-            foreach (var property in input.EnumerateObject())
+            foreach (var property in update.EnumerateObject())
             {
                 if (!metadata.Properties.TryGetValue(property.Name, out var propertyInfo) || !propertyInfo.CanWrite)
                 {

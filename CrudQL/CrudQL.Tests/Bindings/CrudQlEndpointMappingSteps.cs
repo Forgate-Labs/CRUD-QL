@@ -157,6 +157,10 @@ public class CrudQlEndpointMappingSteps
         {
             Assert.That(body, Is.Empty);
         }
+        else if (string.Equals(httpContext.Request.Method, HttpMethods.Put, StringComparison.OrdinalIgnoreCase))
+        {
+            Assert.That(body, Does.Contain("\"affectedRows\""), "Update response should report affected rows");
+        }
         else
         {
             Assert.That(body, Does.Contain("\"data\""), "Response payload should expose a data envelope");
@@ -240,8 +244,7 @@ public class CrudQlEndpointMappingSteps
             {
                 entity = "Product",
                 condition = new { field = "id", op = "eq", value = entityId.Value },
-                input = new { price = 149.9M, description = "Updated" },
-                update = new[] { "id", "price", "description" }
+                update = new { price = 149.9M, description = "Updated" }
             };
         }
 

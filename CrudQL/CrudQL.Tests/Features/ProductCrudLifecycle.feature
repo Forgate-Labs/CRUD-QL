@@ -17,7 +17,7 @@ Feature: Product CRUD lifecycle
       | Jolt Charger   | 65W USB-C charger     | 42.0  | USD      |
     And I GET /crud for Product
     Then the response contains 10 products with the same names in any order
-    When I update the following products through PUT /crud specifying update fields id,name,description,price,currency
+    When I update the following products through PUT /crud
       | Name          | NewDescription        | NewPrice |
       | Equinox Watch | Sapphire crystal case | 279.0    |
       | Flux Backpack | Added laptop sleeve   | 149.0    |
@@ -27,6 +27,7 @@ Feature: Product CRUD lifecycle
       | Equinox Watch | Sapphire crystal case | 279.0 |
       | Flux Backpack | Added laptop sleeve   | 149.0 |
     And the remaining products keep their original description and price
+    And each update response reports 1 affected row
     When I delete the following products through DELETE /crud
       | Name        |
       | Aurora Lamp |
