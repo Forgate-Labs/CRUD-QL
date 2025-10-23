@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Reqnroll;
@@ -65,10 +67,16 @@ public class CrudQlServiceRegistrationSteps
         Assert.That(builderType, Is.Not.Null, "Builder type is not captured");
         var expectedInterface = Assembly.Load("CrudQL.Service").GetType("CrudQL.Service.Configuration.ICrudQlBuilder");
         Assert.That(expectedInterface, Is.Not.Null, "ICrudQlBuilder interface not found");
-        var addEntity = expectedInterface!.GetMethod("AddEntity");
+        var addEntity = expectedInterface!.GetMethod("AddEntity", Type.EmptyTypes);
         Assert.That(addEntity, Is.Not.Null, "ICrudQlBuilder.AddEntity method not found");
         Assert.That(addEntity!.IsGenericMethod, "AddEntity should be generic");
         Assert.That(addEntity.ReturnType == expectedInterface, "AddEntity should return ICrudQlBuilder");
+        var addEntityWithConfiguration = expectedInterface.GetMethods()
+            .SingleOrDefault(method => method.Name == "AddEntity" && method.GetParameters().Length == 1);
+        Assert.That(addEntityWithConfiguration, Is.Not.Null, "ICrudQlBuilder.AddEntity overload with configuration not found");
+        Assert.That(addEntityWithConfiguration!.IsGenericMethod, "Configurable AddEntity should be generic");
+        Assert.That(addEntityWithConfiguration.ReturnType == expectedInterface, "Configurable AddEntity should return ICrudQlBuilder");
+        Assert.That(addEntityWithConfiguration.GetParameters()[0].ParameterType.IsGenericType, "AddEntity configuration parameter should be generic");
         var addEntitiesFromDbContext = expectedInterface.GetMethod("AddEntitiesFromDbContext");
         Assert.That(addEntitiesFromDbContext, Is.Not.Null, "ICrudQlBuilder.AddEntitiesFromDbContext method not found");
         Assert.That(addEntitiesFromDbContext!.IsGenericMethod, "AddEntitiesFromDbContext should be generic");

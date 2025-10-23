@@ -54,7 +54,6 @@ CRUD-QL is organized into **five main layers**:
 ### Read
 ```json
 {
-  "operation": "read",
   "entity": "Product",
   "select": ["id", "name", "price", { "category": ["id", "title"] }],
   "filter": {
@@ -71,12 +70,22 @@ CRUD-QL is organized into **five main layers**:
 ### Create
 ```json
 {
-  "operation": "create",
   "entity": "Product",
-  "input": { "name": "Mouse Pro", "price": 129.9, "categoryId": 3 },
-  "returning": ["id", "name", "price"]
+  "input": { "name": "Mouse Pro", "description": "Wireless", "price": 129.9, "currency": "USD" },
+  "returning": ["id", "name", "description", "price", "currency"]
 }
 ```
+
+### Update
+```json
+{
+  "entity": "Product",
+  "condition": { "field": "id", "op": "eq", "value": 42 },
+  "update": { "description": "Low profile 60%", "price": 430.0 }
+}
+```
+
+`condition` mirrors the GET filter contract and the endpoint replies with the number of affected rows.
 
 ---
 
@@ -88,17 +97,6 @@ Each user role maps to allowed actions (`Read`, `Create`, `Update`, `Delete`).
 ### ABAC (Attribute-Based Access Control)
 Rules are defined per entity row or field, such as:
 > `Product.TenantId == user.TenantId`
-
-```csharp
-public interface IAuthzPolicy<T>
-{
-    Expression<Func<T, bool>> RowPredicate(ClaimsPrincipal user);
-    bool CanReadField(ClaimsPrincipal user, string field);
-    bool CanDo(ClaimsPrincipal user, CrudAction action);
-}
-```
-
----
 
 ## 🧾 Validation (FluentValidation)
 
@@ -115,39 +113,9 @@ public class ProductCreateValidator : AbstractValidator<Product>
 }
 ```
 
-Validators automatically run in the `Create`, `Update`, and `Delete` pipelines.
+Validators automatically run in the CRUD pipelines.
 
----
-
-## ⚙️ Execution Pipeline
-
-### High-Level Steps
-1. Authenticate request (JWT / cookie / OAuth)
-2. Parse and validate schema
-3. Authorize operation and fields
-4. Run validation (FluentValidation)
-5. Build query with filters, sorting, pagination
-6. Execute EF Core
-7. Project safe response shape
-
-### Generic Query Example
-```csharp
-public async Task<object> ExecuteQueryAsync(QueryRequest req, ClaimsPrincipal user)
-{
-    var cfg = _registry.Get(req.Entity);
-    var query = _db.Set(cfg.ClrType).AsQueryable();
-
-    // Row-level policy
-    query = Queryable.Where((dynamic)query, (dynamic)cfg.RowLevelPredicate(user));
-
-    // Apply filters, ordering, and projection
-    query = FilterBuilder.Apply(query, req.Filter);
-    query = SortBuilder.Apply(query, req.OrderBy);
-    var projected = ProjectionBuilder.Project(query, cfg.ClrType, req.Select);
-
-    return await projected.ToListAsync();
-}
-```
+Register validators with `cfg.UseValidator(...)` while adding your entity. When no action is provided the validator is attached to the create pipeline; pass one or more `CrudAction` values to target update and delete operations as needed.
 
 ---
 
@@ -189,12 +157,12 @@ Every `DbSet<T>` implementing `IEntity<TKey>` is automatically discovered and re
 |-----------|-----------|
 | **Query** | Nested filters (`and` / `or`), sorting, cursor pagination |
 | **Mutations** | Create / Update / Delete with validation |
-| **Auth** | JWT, RBAC, ABAC (row- and field-level) |
-| **Validation** | FluentValidation + operation-specific rules |
+| **Auth** | RBAC, ABAC (row- and field-level) |
+| **Validation** | FluentValidation |
 | **Pagination** | Offset or keyset pagination |
-| **Projections** | Field-level access control |
-| **Observability** | Structured logging, tracing, and metrics |
-| **Extensibility** | Custom validators, policies, interceptors |
+| ~~Projections~~ | ~~Field-level access control~~ |
+| ~~Observability~~ | ~~Structured logging, tracing, and metrics~~ |
+| ~~Extensibility~~ | ~~Interceptors~~ |
 
 ---
 
@@ -222,6 +190,8 @@ builder.Services.AddCrudQl()
     .AddEntity<Product>(cfg =>
     {
         cfg.UseValidator(new ProductCreateValidator());
+        cfg.UseValidator(new ProductUpdateValidator(), CrudAction.Update);
+        cfg.UseValidator(new ProductDeleteValidator(), CrudAction.Delete);
         cfg.UsePolicy(new ProductPolicy());
     })
     .AddEntitiesFromDbContext<AppDbContext>();
@@ -249,26 +219,6 @@ app.Run();
 - Aggregations and computed fields  
 - SDK with strong typing  
 - Compiled LINQ expression cache  
-
----
-
-## 🏗 Project Structure (suggested)
-
-```
-CrudQl/
- ├── CrudQl.Core/
- │   ├── Execution/
- │   ├── Validation/
- │   ├── Auth/
- │   ├── Expressions/
- │   └── Extensions/
- ├── CrudQl.Web/
- │   ├── Controllers/
- │   └── Middleware/
- └── CrudQl.Tests/
-     ├── QueryTests.cs
-     └── AuthTests.cs
-```
 
 ---
 

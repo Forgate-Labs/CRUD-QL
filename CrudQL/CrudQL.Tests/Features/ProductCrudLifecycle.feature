@@ -27,6 +27,7 @@ Feature: Product CRUD lifecycle
       | Equinox Watch | Sapphire crystal case | 279.0 |
       | Flux Backpack | Added laptop sleeve   | 149.0 |
     And the remaining products keep their original description and price
+    And each update response reports 1 affected row
     When I delete the following products through DELETE /crud
       | Name        |
       | Aurora Lamp |

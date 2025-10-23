@@ -25,7 +25,7 @@ public sealed class CrudQlEntityRegistrationSteps : IDisposable
     {
         var builder = GetBuilder();
         var builderType = GetBuilderType();
-        var method = builderType.GetMethod("AddEntity");
+        var method = builderType.GetMethod("AddEntity", Type.EmptyTypes);
         Assert.That(method, Is.Not.Null, "AddEntity method was not found on the builder");
         var generic = method!.MakeGenericMethod(typeof(Product));
         var result = generic.Invoke(builder, Array.Empty<object>());
