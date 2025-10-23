@@ -90,9 +90,10 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         }
     }
 
-    public void AddValidator(Type entityType, IValidator validator, IReadOnlyCollection<CrudAction> actions)
+    public void AddValidator(Type entityType, Type targetType, IValidator validator, IReadOnlyCollection<CrudAction> actions)
     {
         ArgumentNullException.ThrowIfNull(entityType);
+        ArgumentNullException.ThrowIfNull(targetType);
         ArgumentNullException.ThrowIfNull(validator);
         if (actions == null || actions.Count == 0)
         {
@@ -103,7 +104,7 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         {
             if (registrations.TryGetValue(entityType, out var existing))
             {
-                var updated = existing with { Validators = MergeValidators(existing.Validators, validator, actions) };
+                var updated = existing with { Validators = MergeValidators(existing.Validators, targetType, validator, actions) };
                 registrations[entityType] = updated;
                 registrationsByName[updated.EntityName] = updated;
                 return;
@@ -111,7 +112,7 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
 
             var registration = new CrudEntityRegistration(entityType.Name, entityType)
             {
-                Validators = MergeValidators(new Dictionary<CrudAction, IReadOnlyList<IValidator>>(), validator, actions)
+                Validators = MergeValidators(new Dictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>>(), targetType, validator, actions)
             };
             registrations[entityType] = registration;
             registrationsByName[registration.EntityName] = registration;
@@ -152,32 +153,33 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         }
     }
 
-    private static IReadOnlyDictionary<CrudAction, IReadOnlyList<IValidator>> MergeValidators(
-        IReadOnlyDictionary<CrudAction, IReadOnlyList<IValidator>> existing,
+    private static IReadOnlyDictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>> MergeValidators(
+        IReadOnlyDictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>> existing,
+        Type targetType,
         IValidator validator,
         IReadOnlyCollection<CrudAction> actions)
     {
         var result = existing.ToDictionary(
             pair => pair.Key,
-            pair => (IReadOnlyList<IValidator>)pair.Value.ToList(),
+            pair => (IReadOnlyList<CrudValidatorRegistration>)pair.Value.ToList(),
             EqualityComparer<CrudAction>.Default);
 
         foreach (var action in actions)
         {
             if (!result.TryGetValue(action, out var validators))
             {
-                result[action] = new List<IValidator> { validator };
+                result[action] = new List<CrudValidatorRegistration> { new CrudValidatorRegistration(targetType, validator) };
                 continue;
             }
 
             var list = validators.ToList();
-            list.Add(validator);
+            list.Add(new CrudValidatorRegistration(targetType, validator));
             result[action] = list;
         }
 
         return result.ToDictionary(
             pair => pair.Key,
-            pair => (IReadOnlyList<IValidator>)pair.Value.ToList(),
+            pair => (IReadOnlyList<CrudValidatorRegistration>)pair.Value.ToList(),
             EqualityComparer<CrudAction>.Default);
     }
 }
