@@ -48,6 +48,31 @@ Feature: Product validation
       | Name     | Description | Price |
       | Keyboard | Updated     | 500   |
 
+  Scenario: Read validator rejects negative price filter
+    Given the Product read filter validator requires non-negative price
+    And the product catalog is empty
+    When I create the following products through POST /crud
+      | Name     | Description    | Price | Currency |
+      | Keyboard | Mechanical 60% | 450   | BRL      |
+    And I read products through GET /crud with filter expecting BadRequest
+      | field | op  | value |
+      | price | gte | -10   |
+    Then the last response status is BadRequest
+
+  Scenario: Read validator accepts non-negative price filter
+    Given the Product read filter validator requires non-negative price
+    And the product catalog is empty
+    When I create the following products through POST /crud
+      | Name     | Description    | Price | Currency |
+      | Keyboard | Mechanical 60% | 450   | BRL      |
+      | Mouse    | Wireless       | 199   | BRL      |
+    And I read products through GET /crud with filter expecting OK
+      | field | op  | value |
+      | price | gte | 300   |
+    Then the response contains the updated products
+      | Name     | Description    | Price |
+      | Keyboard | Mechanical 60% | 450   |
+
   Scenario: Delete validator blocks expensive product
     Given the Product delete validator only allows deleting products cheaper than 200
     And the product catalog is empty

@@ -14,6 +14,6 @@ public sealed record CrudEntityRegistration(string EntityName, Type ClrType)
 
     public ICrudPolicy? Policy { get; init; }
 
-    public IReadOnlyDictionary<CrudAction, IReadOnlyList<IValidator>> Validators { get; init; } =
-        new Dictionary<CrudAction, IReadOnlyList<IValidator>>();
+    public IReadOnlyDictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>> Validators { get; init; } =
+        new Dictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>>();
 }

@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.DependencyInjection;
 using CrudQL.Service.Routing;
+using CrudQL.Service.Validation;
 using CrudQL.Tests.TestAssets;
 using FluentValidation;
 using Microsoft.AspNetCore.Builder;
@@ -34,7 +35,7 @@ public sealed class ProductCrudSteps : IDisposable
     private readonly HashSet<string> updated = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> deleted = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<int> updateResponses = new();
-    private readonly List<(IValidator<Product> Validator, CrudAction[] Actions)> validatorRegistrations = new();
+    private readonly List<(IValidator Validator, CrudAction[] Actions, Type TargetType)> validatorRegistrations = new();
     private TestServer? server;
     private HttpClient? client;
     private IReadOnlyList<ProductRecord>? lastProducts;
@@ -42,6 +43,7 @@ public sealed class ProductCrudSteps : IDisposable
     private ICrudPolicy<Product>? productPolicy;
     private ClaimsPrincipal? currentUser;
     private HttpStatusCode? lastStatusCode;
+    private string? lastResponseBody;
 
     [Given("the Product policy allows only (.+) for CRUD actions")]
     public void GivenTheProductPolicyAllowsOnlyRolesForCrudActions(string roles)
@@ -56,7 +58,7 @@ public sealed class ProductCrudSteps : IDisposable
         var validator = new InlineValidator<Product>();
         validator.RuleFor(x => x.Name).NotEmpty();
         validator.RuleFor(x => x.Price).GreaterThan(0);
-        validatorRegistrations.Add((validator, new[] { CrudAction.Create }));
+        validatorRegistrations.Add((validator, new[] { CrudAction.Create }, typeof(Product)));
     }
 
     [Given("the Product update validator requires positive price")]
@@ -64,7 +66,7 @@ public sealed class ProductCrudSteps : IDisposable
     {
         var validator = new InlineValidator<Product>();
         validator.RuleFor(x => x.Price).GreaterThan(0);
-        validatorRegistrations.Add((validator, new[] { CrudAction.Update }));
+        validatorRegistrations.Add((validator, new[] { CrudAction.Update }, typeof(Product)));
     }
 
     [Given("the Product delete validator only allows deleting products cheaper than (.+)")]
@@ -73,7 +75,27 @@ public sealed class ProductCrudSteps : IDisposable
         var limit = decimal.Parse(threshold, CultureInfo.InvariantCulture);
         var validator = new InlineValidator<Product>();
         validator.RuleFor(x => x.Price).LessThan(limit);
-        validatorRegistrations.Add((validator, new[] { CrudAction.Delete }));
+        validatorRegistrations.Add((validator, new[] { CrudAction.Delete }, typeof(Product)));
+    }
+
+    [Given("the Product read filter validator requires non-negative price")]
+    public void GivenTheProductReadFilterValidatorRequiresNonNegativePrice()
+    {
+        var validator = new InlineValidator<CrudFilterContext>();
+        validator.RuleFor(x => x).Custom((model, context) =>
+        {
+            if (!model.Filter.HasValue)
+            {
+                return;
+            }
+
+            if (FilterContainsNegativePrice(model.Filter.Value))
+            {
+                context.AddFailure("filter", "Price filters must use non-negative values.");
+            }
+        });
+
+        validatorRegistrations.Add((validator, new[] { CrudAction.Read }, typeof(CrudFilterContext)));
     }
 
     [Given("the authenticated user has roles (.+)")]
@@ -110,9 +132,18 @@ public sealed class ProductCrudSteps : IDisposable
                             cfg.UsePolicy(productPolicy);
                         }
 
-                        foreach (var (validator, actions) in validatorRegistrations)
+                        foreach (var (validator, actions, targetType) in validatorRegistrations)
                         {
-                            cfg.UseValidator(validator, actions);
+                            if (targetType == typeof(Product))
+                            {
+                                cfg.UseValidator((IValidator<Product>)validator, actions);
+                                continue;
+                            }
+
+                            if (targetType == typeof(CrudFilterContext))
+                            {
+                                cfg.UseFilterValidator((IValidator<CrudFilterContext>)validator);
+                            }
                         }
                     })
                     .AddEntitiesFromDbContext<FakeDbContext>();
@@ -139,6 +170,7 @@ public sealed class ProductCrudSteps : IDisposable
         updateResponses.Clear();
         lastProducts = null;
         lastStatusCode = null;
+        lastResponseBody = null;
     }
 
     [When(@"I create the following products through POST \/crud")]
@@ -216,6 +248,32 @@ public sealed class ProductCrudSteps : IDisposable
         var response = await currentClient.GetAsync($"/crud?entity=Product&{query}");
         lastStatusCode = response.StatusCode;
         Assert.That(response.StatusCode, Is.EqualTo(expected));
+    }
+
+    [When("I read products through GET /crud with filter expecting (.+)")]
+    public async Task WhenIReadProductsThroughGetCrudWithFilterExpecting(string status, Table table)
+    {
+        var expected = ParseStatusCode(status);
+        var currentClient = EnsureClient();
+        var filter = BuildFilterPayload(table);
+        var payload = new ReadPayload(
+            "Product",
+            filter,
+            new[] { "id", "name", "description", "price", "currency" });
+        var message = new HttpRequestMessage(HttpMethod.Get, "/crud?entity=Product")
+        {
+            Content = JsonContent.Create(payload, options: jsonOptions)
+        };
+        var response = await currentClient.SendAsync(message);
+        lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
+        Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");
+        if (expected == HttpStatusCode.OK)
+        {
+            var collection = JsonSerializer.Deserialize<CollectionResponse>(lastResponseBody, jsonOptions);
+            Assert.That(collection, Is.Not.Null);
+            lastProducts = collection!.Data;
+        }
     }
 
     [Then("the response contains 10 products with the same names in any order")]
@@ -421,6 +479,75 @@ public sealed class ProductCrudSteps : IDisposable
         return client!;
     }
 
+    private static bool FilterContainsNegativePrice(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                if (element.TryGetProperty("field", out var fieldElement) &&
+                    fieldElement.ValueKind == JsonValueKind.String &&
+                    string.Equals(fieldElement.GetString(), "price", StringComparison.OrdinalIgnoreCase) &&
+                    element.TryGetProperty("value", out var valueElement))
+                {
+                    if (valueElement.ValueKind == JsonValueKind.Number)
+                    {
+                        if (valueElement.TryGetDecimal(out var decimalValue) && decimalValue < 0)
+                        {
+                            return true;
+                        }
+
+                        try
+                        {
+                            if (valueElement.GetDouble() < 0)
+                            {
+                                return true;
+                            }
+                        }
+                        catch (FormatException)
+                        {
+                            // ignore
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            // ignore
+                        }
+                    }
+
+                    if (valueElement.ValueKind == JsonValueKind.String &&
+                        decimal.TryParse(valueElement.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) &&
+                        parsed < 0)
+                    {
+                        return true;
+                    }
+                }
+
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (property.Value.ValueKind == JsonValueKind.Object || property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        if (FilterContainsNegativePrice(property.Value))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (FilterContainsNegativePrice(item))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            default:
+                return false;
+        }
+    }
+
     private static string[] ParseRoles(string roles)
     {
         if (string.IsNullOrWhiteSpace(roles))
@@ -448,6 +575,45 @@ public sealed class ProductCrudSteps : IDisposable
         }
 
         throw new ArgumentException($"Unknown HTTP status '{value}'", nameof(value));
+    }
+
+    private static object? BuildFilterPayload(Table table)
+    {
+        if (table.Rows.Count == 0)
+        {
+            return null;
+        }
+
+        object BuildClause(dynamic row)
+        {
+            var field = (string)row["field"];
+            var op = (string)row["op"];
+            var value = ParseFilterValue(row["value"]);
+            return new FilterClause(field, op, value);
+        }
+
+        if (table.Rows.Count == 1)
+        {
+            return BuildClause(table.Rows[0]);
+        }
+
+        var clauses = table.Rows.Select(row => BuildClause(row)).ToArray();
+        return new { and = clauses };
+    }
+
+    private static object ParseFilterValue(string value)
+    {
+        if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var decimalValue))
+        {
+            return decimalValue;
+        }
+
+        if (bool.TryParse(value, out var boolValue))
+        {
+            return boolValue;
+        }
+
+        return value;
     }
 
     private sealed class RoleRestrictedProductPolicy : CrudPolicy<Product>
@@ -512,5 +678,9 @@ public sealed class ProductCrudSteps : IDisposable
     private sealed record UpdatePayload(string Entity, ConditionPayload Condition, UpdateChanges Update);
 
     private sealed record UpdateResponse(int AffectedRows);
+
+    private sealed record ReadPayload(string Entity, object? Filter, string[] Select);
+
+    private sealed record FilterClause(string Field, string Op, object Value);
 
 }

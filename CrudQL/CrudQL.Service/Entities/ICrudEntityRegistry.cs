@@ -16,7 +16,7 @@ public interface ICrudEntityRegistry
 
     void SetPolicy(Type entityType, ICrudPolicy? policy);
 
-    void AddValidator(Type entityType, IValidator validator, IReadOnlyCollection<CrudAction> actions);
+    void AddValidator(Type entityType, Type targetType, IValidator validator, IReadOnlyCollection<CrudAction> actions);
 
     DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class;
 

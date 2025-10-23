@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Validation;
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Builder;
@@ -42,7 +43,14 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
     private static async Task HandleCreate(HttpContext context, [FromServices] ICrudEntityRegistry registry)
     {
-        var root = await ParseBodyAsync(context.Request);
+        var body = await ParseBodyAsync(context.Request);
+        if (!body.IsValidJson)
+        {
+            await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
+            return;
+        }
+
+        var root = body.Root;
         if (root == null)
         {
             await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
@@ -100,16 +108,14 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
     private static async Task HandleRead(HttpContext context, [FromServices] ICrudEntityRegistry registry)
     {
-        JsonElement? root = null;
-        if (context.Request.ContentLength > 0 || context.Request.Body.CanSeek && context.Request.Body.Length > 0)
+        var body = await ParseBodyAsync(context.Request);
+        if (!body.IsValidJson && body.HasContent)
         {
-            root = await ParseBodyAsync(context.Request);
-            if (root == null)
-            {
-                await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
-                return;
-            }
+            await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
+            return;
         }
+
+        var root = body.Root;
 
         if (!TryResolveEntity(context, root, out var entityName, out var error))
         {
@@ -124,6 +130,16 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         if (!CrudEntityExecutor.TryAuthorize(context, registration, CrudAction.Read, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        var filterElement = root.HasValue && root.Value.ValueKind == JsonValueKind.Object && root.Value.TryGetProperty("filter", out var filterJson)
+            ? filterJson
+            : (JsonElement?)null;
+        var filterContext = new CrudFilterContext(entityName, registration.ClrType, filterElement);
+        if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Read, filterContext, out error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -144,7 +160,14 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
     private static async Task HandleUpdate(HttpContext context, [FromServices] ICrudEntityRegistry registry)
     {
-        var root = await ParseBodyAsync(context.Request);
+        var body = await ParseBodyAsync(context.Request);
+        if (!body.IsValidJson)
+        {
+            await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
+            return;
+        }
+
+        var root = body.Root;
         if (root == null)
         {
             await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
@@ -225,7 +248,14 @@ public static class CrudQlEndpointRouteBuilderExtensions
         JsonElement? root = null;
         if (context.Request.ContentLength > 0 || context.Request.Body.CanSeek && context.Request.Body.Length > 0)
         {
-            root = await ParseBodyAsync(context.Request);
+            var body = await ParseBodyAsync(context.Request);
+            if (!body.IsValidJson)
+            {
+                await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
+                return;
+            }
+
+            root = body.Root;
             if (root == null)
             {
                 await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
@@ -281,7 +311,7 @@ public static class CrudQlEndpointRouteBuilderExtensions
         await Results.NoContent().ExecuteAsync(context);
     }
 
-    private static async Task<JsonElement?> ParseBodyAsync(HttpRequest request)
+    private static async Task<BodyParseResult> ParseBodyAsync(HttpRequest request)
     {
         request.EnableBuffering();
         request.Body.Position = 0;
@@ -292,19 +322,21 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         if (string.IsNullOrWhiteSpace(content))
         {
-            return null;
+            return new BodyParseResult(null, false, true);
         }
 
         try
         {
             using var document = JsonDocument.Parse(content);
-            return document.RootElement.Clone();
+            return new BodyParseResult(document.RootElement.Clone(), true, true);
         }
         catch (JsonException)
         {
-            return null;
+            return new BodyParseResult(null, true, false);
         }
     }
+
+    private readonly record struct BodyParseResult(JsonElement? Root, bool HasContent, bool IsValidJson);
 
     private static bool TryResolveEntity(HttpContext context, JsonElement? root, out string entityName, out IResult? error)
     {
@@ -449,16 +481,16 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         public static bool TryValidate(CrudEntityRegistration registration, CrudAction action, object entity, out IResult? error)
         {
-            if (!registration.Validators.TryGetValue(action, out var validators) || validators.Count == 0)
+            if (!registration.Validators.TryGetValue(action, out var registrations) || registrations.Count == 0)
             {
                 error = null;
                 return true;
             }
 
             var failures = new List<ValidationFailure>();
-            foreach (var validator in validators)
+            foreach (var validatorRegistration in registrations)
             {
-                var result = InvokeValidator(registration.ClrType, validator, entity);
+                var result = InvokeValidator(validatorRegistration.TargetType, validatorRegistration.Validator, entity);
                 if (!result.IsValid)
                 {
                     failures.AddRange(result.Errors);
