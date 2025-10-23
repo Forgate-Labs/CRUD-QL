@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
+using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 
 namespace CrudQL.Service.Entities;
@@ -14,6 +15,8 @@ public interface ICrudEntityRegistry
     void RegisterEntitySetResolver(Type entityType, Func<IServiceProvider, object> setResolver, Func<IServiceProvider, DbContext> contextResolver);
 
     void SetPolicy(Type entityType, ICrudPolicy? policy);
+
+    void AddValidator(Type entityType, IValidator validator, IReadOnlyCollection<CrudAction> actions);
 
     DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class;
 

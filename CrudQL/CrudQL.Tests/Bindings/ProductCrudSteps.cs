@@ -12,6 +12,7 @@ using CrudQL.Service.Authorization;
 using CrudQL.Service.DependencyInjection;
 using CrudQL.Service.Routing;
 using CrudQL.Tests.TestAssets;
+using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -33,6 +34,7 @@ public sealed class ProductCrudSteps : IDisposable
     private readonly HashSet<string> updated = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> deleted = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<int> updateResponses = new();
+    private readonly List<(IValidator<Product> Validator, CrudAction[] Actions)> validatorRegistrations = new();
     private TestServer? server;
     private HttpClient? client;
     private IReadOnlyList<ProductRecord>? lastProducts;
@@ -46,6 +48,32 @@ public sealed class ProductCrudSteps : IDisposable
     {
         var parsed = ParseRoles(roles);
         productPolicy = new RoleRestrictedProductPolicy(parsed);
+    }
+
+    [Given("the Product create validator requires name and positive price")]
+    public void GivenTheProductCreateValidatorRequiresNameAndPositivePrice()
+    {
+        var validator = new InlineValidator<Product>();
+        validator.RuleFor(x => x.Name).NotEmpty();
+        validator.RuleFor(x => x.Price).GreaterThan(0);
+        validatorRegistrations.Add((validator, new[] { CrudAction.Create }));
+    }
+
+    [Given("the Product update validator requires positive price")]
+    public void GivenTheProductUpdateValidatorRequiresPositivePrice()
+    {
+        var validator = new InlineValidator<Product>();
+        validator.RuleFor(x => x.Price).GreaterThan(0);
+        validatorRegistrations.Add((validator, new[] { CrudAction.Update }));
+    }
+
+    [Given("the Product delete validator only allows deleting products cheaper than (.+)")]
+    public void GivenTheProductDeleteValidatorOnlyAllowsDeletingProductsCheaperThan(string threshold)
+    {
+        var limit = decimal.Parse(threshold, CultureInfo.InvariantCulture);
+        var validator = new InlineValidator<Product>();
+        validator.RuleFor(x => x.Price).LessThan(limit);
+        validatorRegistrations.Add((validator, new[] { CrudAction.Delete }));
     }
 
     [Given("the authenticated user has roles (.+)")]
@@ -80,6 +108,11 @@ public sealed class ProductCrudSteps : IDisposable
                         if (productPolicy != null)
                         {
                             cfg.UsePolicy(productPolicy);
+                        }
+
+                        foreach (var (validator, actions) in validatorRegistrations)
+                        {
+                            cfg.UseValidator(validator, actions);
                         }
                     })
                     .AddEntitiesFromDbContext<FakeDbContext>();
@@ -153,12 +186,14 @@ public sealed class ProductCrudSteps : IDisposable
     }
 
     [When(@"I GET \/crud for Product")]
+    [Then(@"I GET \/crud for Product")]
     public async Task WhenIGetCrudForProduct()
     {
         await WhenIGetCrudForProductSelecting("id,name,description,price,currency");
     }
 
     [When(@"I GET \/crud for Product selecting (.+)")]
+    [Then(@"I GET \/crud for Product selecting (.+)")]
     public async Task WhenIGetCrudForProductSelecting(string fields)
     {
         var currentClient = EnsureClient();

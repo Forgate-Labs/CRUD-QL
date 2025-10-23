@@ -13,6 +13,8 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -73,6 +75,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         var returning = GetStringArray(root.Value, "returning");
         if (!CrudEntityExecutor.TryDeserializeEntity(registration, inputElement, out var entity, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Create, entity!, out error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -199,6 +207,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 await error!.ExecuteAsync(context);
                 return;
             }
+
+            if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Update, match, out error))
+            {
+                await error!.ExecuteAsync(context);
+                return;
+            }
         }
 
         await dbContext.SaveChangesAsync(context.RequestAborted);
@@ -253,6 +267,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
         if (entity == null)
         {
             await Results.NotFound(new { message = $"Entity '{id}' was not found" }).ExecuteAsync(context);
+            return;
+        }
+
+        if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Delete, entity, out error))
+        {
+            await error!.ExecuteAsync(context);
             return;
         }
 
@@ -425,6 +445,42 @@ public static class CrudQlEndpointRouteBuilderExtensions
             .First(method => method.Name == nameof(Queryable.Where) && method.GetParameters().Length == 2);
         private static readonly MethodInfo ToListAsyncMethodDefinition = typeof(EntityFrameworkQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(method => method.Name == nameof(EntityFrameworkQueryableExtensions.ToListAsync) && method.GetParameters().Length == 2);
+        private static readonly ConcurrentDictionary<Type, Func<object, IValidationContext>> ValidationContextFactories = new();
+
+        public static bool TryValidate(CrudEntityRegistration registration, CrudAction action, object entity, out IResult? error)
+        {
+            if (!registration.Validators.TryGetValue(action, out var validators) || validators.Count == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            var failures = new List<ValidationFailure>();
+            foreach (var validator in validators)
+            {
+                var result = InvokeValidator(registration.ClrType, validator, entity);
+                if (!result.IsValid)
+                {
+                    failures.AddRange(result.Errors);
+                }
+            }
+
+            if (failures.Count == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            var errors = failures
+                .GroupBy(failure => failure.PropertyName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Where(f => !string.IsNullOrWhiteSpace(f.ErrorMessage)).Select(f => f.ErrorMessage).Distinct().ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            error = Results.Json(new { message = "Validation failed", errors }, SerializerOptions, null, StatusCodes.Status400BadRequest);
+            return false;
+        }
 
         public static bool TryAuthorize(HttpContext context, CrudEntityRegistration registration, CrudAction action, out IResult? error)
         {
@@ -448,6 +504,38 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 null,
                 StatusCodes.Status401Unauthorized);
             return false;
+        }
+
+        private static ValidationResult InvokeValidator(Type entityType, IValidator validator, object instance)
+        {
+            if (!entityType.IsInstanceOfType(instance))
+            {
+                throw new InvalidOperationException($"Instance is not of type '{entityType.Name}'");
+            }
+
+            var validateMethod = validator.GetType().GetMethod("Validate", BindingFlags.Public | BindingFlags.Instance, null, new[] { entityType }, null);
+            if (validateMethod != null)
+            {
+                return (ValidationResult)validateMethod.Invoke(validator, new[] { instance })!;
+            }
+
+            var context = CreateValidationContext(entityType, instance);
+            return validator.Validate(context);
+        }
+
+        private static IValidationContext CreateValidationContext(Type entityType, object instance)
+        {
+            var factory = ValidationContextFactories.GetOrAdd(entityType, CreateValidationContextFactory);
+            return factory(instance);
+        }
+
+        private static Func<object, IValidationContext> CreateValidationContextFactory(Type entityType)
+        {
+            var contextType = typeof(ValidationContext<>).MakeGenericType(entityType);
+            var constructor = contextType.GetConstructor(new[] { entityType })
+                ?? throw new InvalidOperationException($"ValidationContext constructor for '{entityType.Name}' was not found.");
+
+            return instance => (IValidationContext)constructor.Invoke(new[] { instance });
         }
 
         public static bool TryResolveDbContext(HttpContext context, CrudEntityRegistration registration, out DbContext dbContext, out IResult? error)

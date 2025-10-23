@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Authorization;
+using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 
 namespace CrudQL.Service.Entities;
@@ -89,6 +90,34 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         }
     }
 
+    public void AddValidator(Type entityType, IValidator validator, IReadOnlyCollection<CrudAction> actions)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+        ArgumentNullException.ThrowIfNull(validator);
+        if (actions == null || actions.Count == 0)
+        {
+            throw new ArgumentException("At least one action must be provided.", nameof(actions));
+        }
+
+        lock (gate)
+        {
+            if (registrations.TryGetValue(entityType, out var existing))
+            {
+                var updated = existing with { Validators = MergeValidators(existing.Validators, validator, actions) };
+                registrations[entityType] = updated;
+                registrationsByName[updated.EntityName] = updated;
+                return;
+            }
+
+            var registration = new CrudEntityRegistration(entityType.Name, entityType)
+            {
+                Validators = MergeValidators(new Dictionary<CrudAction, IReadOnlyList<IValidator>>(), validator, actions)
+            };
+            registrations[entityType] = registration;
+            registrationsByName[registration.EntityName] = registration;
+        }
+    }
+
     public DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
@@ -121,5 +150,34 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         {
             return registrationsByName.TryGetValue(entityName, out registration!);
         }
+    }
+
+    private static IReadOnlyDictionary<CrudAction, IReadOnlyList<IValidator>> MergeValidators(
+        IReadOnlyDictionary<CrudAction, IReadOnlyList<IValidator>> existing,
+        IValidator validator,
+        IReadOnlyCollection<CrudAction> actions)
+    {
+        var result = existing.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<IValidator>)pair.Value.ToList(),
+            EqualityComparer<CrudAction>.Default);
+
+        foreach (var action in actions)
+        {
+            if (!result.TryGetValue(action, out var validators))
+            {
+                result[action] = new List<IValidator> { validator };
+                continue;
+            }
+
+            var list = validators.ToList();
+            list.Add(validator);
+            result[action] = list;
+        }
+
+        return result.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<IValidator>)pair.Value.ToList(),
+            EqualityComparer<CrudAction>.Default);
     }
 }

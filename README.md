@@ -126,6 +126,8 @@ public class ProductCreateValidator : AbstractValidator<Product>
 
 Validators automatically run in the `Create`, `Update`, and `Delete` pipelines.
 
+Register validators with `cfg.UseValidator(...)` while adding your entity. When no action is provided the validator is attached to the create pipeline; pass one or more `CrudAction` values to target update and delete operations as needed.
+
 ---
 
 ## ⚙️ Execution Pipeline
@@ -231,6 +233,8 @@ builder.Services.AddCrudQl()
     .AddEntity<Product>(cfg =>
     {
         cfg.UseValidator(new ProductCreateValidator());
+        cfg.UseValidator(new ProductUpdateValidator(), CrudAction.Update);
+        cfg.UseValidator(new ProductDeleteValidator(), CrudAction.Delete);
         cfg.UsePolicy(new ProductPolicy());
     })
     .AddEntitiesFromDbContext<AppDbContext>();
@@ -258,26 +262,6 @@ app.Run();
 - Aggregations and computed fields  
 - SDK with strong typing  
 - Compiled LINQ expression cache  
-
----
-
-## 🏗 Project Structure (suggested)
-
-```
-CrudQl/
- ├── CrudQl.Core/
- │   ├── Execution/
- │   ├── Validation/
- │   ├── Auth/
- │   ├── Expressions/
- │   └── Extensions/
- ├── CrudQl.Web/
- │   ├── Controllers/
- │   └── Middleware/
- └── CrudQl.Tests/
-     ├── QueryTests.cs
-     └── AuthTests.cs
-```
 
 ---
 
