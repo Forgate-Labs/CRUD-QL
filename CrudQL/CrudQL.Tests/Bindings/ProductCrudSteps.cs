@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -96,6 +97,18 @@ public sealed class ProductCrudSteps : IDisposable
         });
 
         validatorRegistrations.Add((validator, new[] { CrudAction.Read }, typeof(CrudFilterContext)));
+    }
+
+    [Given(@"the Product policy restricts Support read and create responses to id and name with mask ""(.+)"" while Admin remains unrestricted")]
+    public void GivenTheProductPolicyRestrictsSupportReadAndCreateResponses(string mask)
+    {
+        productPolicy = ProjectionRestrictedProductPolicy.ForSupport(mask, restrictCreate: true);
+    }
+
+    [Given("the Product policy restricts Support read responses to id and name without configuring a mask")]
+    public void GivenTheProductPolicyRestrictsSupportReadResponsesWithoutMask()
+    {
+        productPolicy = ProjectionRestrictedProductPolicy.ForSupport(null, restrictCreate: false);
     }
 
     [Given("the authenticated user has roles (.+)")]
@@ -217,6 +230,38 @@ public sealed class ProductCrudSteps : IDisposable
         }
     }
 
+    [When(@"I create a Product through POST \/crud selecting (.+)")]
+    public async Task WhenICreateAProductThroughPostCrudSelecting(string returning, Table table)
+    {
+        var selectFields = returning.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var currentClient = EnsureClient();
+        foreach (var row in table.Rows)
+        {
+            var payload = new CreatePayload(
+                "Product",
+                new ProductInput(
+                    row["Name"],
+                    row["Description"],
+                    decimal.Parse(row["Price"], CultureInfo.InvariantCulture),
+                    row["Currency"]),
+                selectFields);
+            var response = await currentClient.PostAsJsonAsync("/crud", payload, jsonOptions);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+            lastStatusCode = response.StatusCode;
+            lastResponseBody = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(lastResponseBody);
+            var data = document.RootElement.GetProperty("data");
+            var id = data.GetProperty("id").GetInt32();
+            var name = row["Name"];
+            products[name] = new TrackedProduct(
+                id,
+                name,
+                row["Description"],
+                decimal.Parse(row["Price"], CultureInfo.InvariantCulture),
+                row["Currency"]);
+        }
+    }
+
     [When(@"I GET \/crud for Product")]
     [Then(@"I GET \/crud for Product")]
     public async Task WhenIGetCrudForProduct()
@@ -233,9 +278,10 @@ public sealed class ProductCrudSteps : IDisposable
         var query = string.Join("&", selectFields.Select(field => $"select={Uri.EscapeDataString(field)}"));
         var response = await currentClient.GetAsync($"/crud?entity=Product&{query}");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        var collection = await response.Content.ReadFromJsonAsync<CollectionResponse>(jsonOptions);
-        Assert.That(collection, Is.Not.Null);
-        lastProducts = collection!.Data;
+        lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
+        var collection = TryDeserializeCollectionResponse(lastResponseBody);
+        lastProducts = collection?.Data;
     }
 
     [When(@"I attempt to read products through GET \/crud expecting (.+) selecting (.+)")]
@@ -247,6 +293,7 @@ public sealed class ProductCrudSteps : IDisposable
         var query = string.Join("&", selectFields.Select(field => $"select={Uri.EscapeDataString(field)}"));
         var response = await currentClient.GetAsync($"/crud?entity=Product&{query}");
         lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
         Assert.That(response.StatusCode, Is.EqualTo(expected));
     }
 
@@ -270,9 +317,12 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");
         if (expected == HttpStatusCode.OK)
         {
-            var collection = JsonSerializer.Deserialize<CollectionResponse>(lastResponseBody, jsonOptions);
-            Assert.That(collection, Is.Not.Null);
-            lastProducts = collection!.Data;
+            var collection = TryDeserializeCollectionResponse(lastResponseBody);
+            lastProducts = collection?.Data;
+        }
+        else
+        {
+            lastProducts = null;
         }
     }
 
@@ -290,6 +340,30 @@ public sealed class ProductCrudSteps : IDisposable
     {
         Assert.That(lastProducts, Is.Not.Null);
         Assert.That(lastProducts!, Has.Count.EqualTo(0));
+    }
+
+    [Then(@"the last response masks the following Product fields with ""(.+)""")]
+    public void ThenTheLastResponseMasksTheFollowingProductFieldsWith(string mask, Table table)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null, "No response payload was captured.");
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var data = document.RootElement.GetProperty("data");
+        foreach (var row in table.Rows)
+        {
+            var element = ResolveProductElement(data, row["Name"]);
+            foreach (var header in table.Header)
+            {
+                if (string.Equals(header, "Name", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var field = ToCamelCase(header);
+                Assert.That(element.TryGetProperty(field, out var property), Is.True, $"Field '{field}' was not present for '{row["Name"]}'.");
+                Assert.That(property.ValueKind, Is.EqualTo(JsonValueKind.String), $"Field '{field}' was not suppressed.");
+                Assert.That(property.GetString(), Is.EqualTo(mask), $"Field '{field}' was not masked with '{mask}'.");
+            }
+        }
     }
 
     [When(@"I update the following products through PUT \/crud")]
@@ -614,6 +688,87 @@ public sealed class ProductCrudSteps : IDisposable
         }
 
         return value;
+    }
+
+    private CollectionResponse? TryDeserializeCollectionResponse(string payload)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<CollectionResponse>(payload, jsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonElement ResolveProductElement(JsonElement data, string name)
+    {
+        if (data.ValueKind == JsonValueKind.Object)
+        {
+            if (data.TryGetProperty("name", out var candidate) && string.Equals(candidate.GetString(), name, StringComparison.OrdinalIgnoreCase))
+            {
+                return data;
+            }
+        }
+        else if (data.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var element in data.EnumerateArray())
+            {
+                if (element.TryGetProperty("name", out var candidate) && string.Equals(candidate.GetString(), name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return element;
+                }
+            }
+        }
+
+        throw new AssertionException($"Product '{name}' was not found in the last response.");
+    }
+
+    private static string ToCamelCase(string value)
+    {
+        if (string.IsNullOrEmpty(value) || char.IsLower(value[0]))
+        {
+            return value;
+        }
+
+        return char.ToLowerInvariant(value[0]) + value[1..];
+    }
+
+    private sealed class ProjectionRestrictedProductPolicy : CrudPolicy<Product>
+    {
+        private ProjectionRestrictedProductPolicy(string? suppression, bool restrictCreate)
+        {
+            if (!string.IsNullOrWhiteSpace(suppression))
+            {
+                UseSupression(suppression);
+            }
+
+            Configure(restrictCreate);
+        }
+
+        public static ProjectionRestrictedProductPolicy ForSupport(string? suppression, bool restrictCreate)
+        {
+            return new ProjectionRestrictedProductPolicy(suppression, restrictCreate);
+        }
+
+        private void Configure(bool restrictCreate)
+        {
+            var restrictedFields = new Expression<Func<Product, object>>[] { product => product.Id, product => product.Name };
+            Allow(CrudAction.Read).ForRoles("Support").ForFields(restrictedFields);
+            Allow(CrudAction.Read).ForRoles("Admin");
+
+            if (restrictCreate)
+            {
+                Allow(CrudAction.Create).ForRoles("Support").ForFields(restrictedFields);
+            }
+            else
+            {
+                Allow(CrudAction.Create).ForRoles("Support");
+            }
+
+            Allow(CrudAction.Create).ForRoles("Admin");
+        }
     }
 
     private sealed class RoleRestrictedProductPolicy : CrudPolicy<Product>
