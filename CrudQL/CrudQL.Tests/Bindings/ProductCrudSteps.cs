@@ -230,6 +230,21 @@ public sealed class ProductCrudSteps : IDisposable
         }
     }
 
+    [When(@"I attempt to create a raw Product payload with unknown fields through POST \/crud expecting (.+)")]
+    public async Task WhenIAttemptToCreateARawProductPayloadWithUnknownFieldsThroughPostCrudExpecting(string status, Table table)
+    {
+        var expected = ParseStatusCode(status);
+        var currentClient = EnsureClient();
+        var payload = new RawCreatePayload(
+            "Product",
+            BuildRawInput(table),
+            new[] { "id", "name", "description", "price", "currency" });
+        var response = await currentClient.PostAsJsonAsync("/crud", payload, jsonOptions);
+        lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
+        Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");
+    }
+
     [When(@"I create a Product through POST \/crud selecting (.+)")]
     public async Task WhenICreateAProductThroughPostCrudSelecting(string returning, Table table)
     {
@@ -297,6 +312,32 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(response.StatusCode, Is.EqualTo(expected));
     }
 
+    [When(@"I attempt to read products through GET \/crud with payload select expecting (.+) selecting (.+)")]
+    public async Task WhenIAttemptToReadProductsThroughGetCrudWithPayloadSelectExpecting(string status, string fields)
+    {
+        var expected = ParseStatusCode(status);
+        var currentClient = EnsureClient();
+        var selectFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var payload = new ReadPayload("Product", null, selectFields);
+        var message = new HttpRequestMessage(HttpMethod.Get, "/crud?entity=Product")
+        {
+            Content = JsonContent.Create(payload, options: jsonOptions)
+        };
+        var response = await currentClient.SendAsync(message);
+        lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
+        Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");
+        if (expected == HttpStatusCode.OK)
+        {
+            var collection = TryDeserializeCollectionResponse(lastResponseBody);
+            lastProducts = collection?.Data;
+        }
+        else
+        {
+            lastProducts = null;
+        }
+    }
+
     [When("I read products through GET /crud with filter expecting (.+)")]
     public async Task WhenIReadProductsThroughGetCrudWithFilterExpecting(string status, Table table)
     {
@@ -340,6 +381,26 @@ public sealed class ProductCrudSteps : IDisposable
     {
         Assert.That(lastProducts, Is.Not.Null);
         Assert.That(lastProducts!, Has.Count.EqualTo(0));
+    }
+
+    [Then(@"the last response reports unknown Product fields (.+)")]
+    public void ThenTheLastResponseReportsUnknownProductFields(string fields)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null, "No response payload was captured.");
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var root = document.RootElement;
+        Assert.That(root.TryGetProperty("message", out var messageElement), Is.True);
+        Assert.That(messageElement.GetString(), Is.EqualTo("Unknown fields in payload"));
+        Assert.That(root.TryGetProperty("entity", out var entityElement), Is.True);
+        Assert.That(entityElement.GetString(), Is.EqualTo("Product"));
+        Assert.That(root.TryGetProperty("fields", out var fieldsElement), Is.True);
+        var actual = fieldsElement.EnumerateArray()
+            .Select(item => item.GetString())
+            .Where(value => value != null)
+            .Select(value => value!)
+            .ToList();
+        var expected = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.That(actual, Is.EquivalentTo(expected));
     }
 
     [Then(@"the last response masks the following Product fields with ""(.+)""")]
@@ -551,6 +612,28 @@ public sealed class ProductCrudSteps : IDisposable
     {
         Assert.That(client, Is.Not.Null);
         return client!;
+    }
+
+    private static Dictionary<string, object?> BuildRawInput(Table table)
+    {
+        var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in table.Rows)
+        {
+            var field = row["field"];
+            payload[field] = ParseRawValue(row["value"]);
+        }
+
+        return payload;
+    }
+
+    private static object? ParseRawValue(string value)
+    {
+        if (string.Equals(value, "null", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return ParseFilterValue(value);
     }
 
     private static bool FilterContainsNegativePrice(JsonElement element)
@@ -825,6 +908,8 @@ public sealed class ProductCrudSteps : IDisposable
     private sealed record ProductInput(string Name, string Description, decimal Price, string Currency);
 
     private sealed record CreatePayload(string Entity, ProductInput Input, string[] Returning);
+
+    private sealed record RawCreatePayload(string Entity, Dictionary<string, object?> Input, string[] Returning);
 
     private sealed record UpdateChanges(string Description, decimal Price);
 

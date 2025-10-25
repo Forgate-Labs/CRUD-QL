@@ -33,10 +33,10 @@ public static class CrudQlEndpointRouteBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        endpoints.MapPost(CrudRoute, HandleCreate);
-        endpoints.MapGet(CrudRoute, HandleRead);
-        endpoints.MapPut(CrudRoute, HandleUpdate);
-        endpoints.MapDelete(CrudRoute, HandleDelete);
+        endpoints.MapPost(CrudRoute, HandleCreate).WithCrudQlDocumentation(CrudAction.Create);
+        endpoints.MapGet(CrudRoute, HandleRead).WithCrudQlDocumentation(CrudAction.Read);
+        endpoints.MapPut(CrudRoute, HandleUpdate).WithCrudQlDocumentation(CrudAction.Update);
+        endpoints.MapDelete(CrudRoute, HandleDelete).WithCrudQlDocumentation(CrudAction.Delete);
 
         return endpoints;
     }
@@ -153,6 +153,11 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         var select = ResolveSelectFields(root, context.Request.Query);
+        if (!CrudEntityExecutor.TryValidateSelect(registration, select, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
         var cast = Queryable.Cast<object>(queryable);
         var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
         var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
@@ -658,6 +663,19 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         public static bool TryDeserializeEntity(CrudEntityRegistration registration, JsonElement input, out object entity, out IResult? error)
         {
+            var metadata = GetMetadata(registration.ClrType);
+            var unknownFields = ResolveUnknownFields(metadata, input);
+            if (unknownFields.Count > 0)
+            {
+                entity = default!;
+                error = Results.Json(
+                    new { message = "Unknown fields in payload", entity = registration.EntityName, fields = unknownFields },
+                    SerializerOptions,
+                    null,
+                    StatusCodes.Status400BadRequest);
+                return false;
+            }
+
             try
             {
                 entity = JsonSerializer.Deserialize(input.GetRawText(), registration.ClrType, SerializerOptions)!;
@@ -677,6 +695,57 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
             error = null;
             return true;
+        }
+
+        public static bool TryValidateSelect(CrudEntityRegistration registration, IReadOnlyCollection<string>? select, out IResult? error)
+        {
+            if (select == null || select.Count == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            var metadata = GetMetadata(registration.ClrType);
+            var unknown = new List<string>();
+            foreach (var field in select)
+            {
+                if (!metadata.Properties.ContainsKey(field))
+                {
+                    unknown.Add(field);
+                }
+            }
+
+            if (unknown.Count == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            error = Results.Json(
+                new { message = "Unknown fields in payload", entity = registration.EntityName, fields = unknown },
+                SerializerOptions,
+                null,
+                StatusCodes.Status400BadRequest);
+            return false;
+        }
+
+        private static List<string> ResolveUnknownFields(EntityMetadata metadata, JsonElement input)
+        {
+            var unknown = new List<string>();
+            if (input.ValueKind != JsonValueKind.Object)
+            {
+                return unknown;
+            }
+
+            foreach (var property in input.EnumerateObject())
+            {
+                if (!metadata.Properties.ContainsKey(property.Name))
+                {
+                    unknown.Add(property.Name);
+                }
+            }
+
+            return unknown;
         }
 
         public static async Task<object?> FindAsync(DbContext dbContext, CrudEntityRegistration registration, int id, CancellationToken cancellationToken)
