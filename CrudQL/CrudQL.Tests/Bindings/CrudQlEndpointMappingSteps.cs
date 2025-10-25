@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Globalization;
 using NUnit.Framework;
 using Reqnroll;
 
@@ -36,6 +38,63 @@ public class CrudQlEndpointMappingSteps
         endpoints = null;
         capturedException = null;
         selectedEndpoint = null;
+    }
+
+    [Then(@"the Swagger metadata for (.*) should describe the payload fields ""(.*)""")]
+    public void ThenTheSwaggerMetadataShouldDescribeThePayloadFields(string verb, string fields)
+    {
+        var metadata = GetCrudDocumentationMetadata();
+        var method = metadata.GetType().GetProperty("Method")?.GetValue(metadata) as string;
+        Assert.That(method, Is.EqualTo(verb.ToUpperInvariant()), "Swagger metadata method mismatch");
+
+        var expectedFields = ParseList(fields);
+        var actualFields = ExtractStringCollection(metadata, "RequestFields");
+        CollectionAssert.AreEquivalent(expectedFields, actualFields, "Swagger payload fields mismatch");
+    }
+
+    [Then(@"the Swagger metadata for (.*) should describe the ""(\d{3})"" response with ""(.*)""")]
+    public void ThenTheSwaggerMetadataShouldDescribeTheResponse(string verb, string status, string properties)
+    {
+        var metadata = GetCrudDocumentationMetadata();
+        var method = metadata.GetType().GetProperty("Method")?.GetValue(metadata) as string;
+        Assert.That(method, Is.EqualTo(verb.ToUpperInvariant()), "Swagger metadata method mismatch");
+
+        var responsesProperty = metadata.GetType().GetProperty("Responses");
+        Assert.That(responsesProperty, Is.Not.Null, "Swagger metadata does not expose responses");
+        var responses = responsesProperty!.GetValue(metadata) as IEnumerable;
+        Assert.That(responses, Is.Not.Null, "Swagger metadata responses are missing");
+
+        var statusCode = int.Parse(status, CultureInfo.InvariantCulture);
+        object? matchingResponse = null;
+        foreach (var response in responses!)
+        {
+            if (response == null)
+            {
+                continue;
+            }
+
+            var statusProperty = response.GetType().GetProperty("StatusCode");
+            if (statusProperty?.GetValue(response) is int candidate && candidate == statusCode)
+            {
+                matchingResponse = response;
+                break;
+            }
+        }
+
+        Assert.That(matchingResponse, Is.Not.Null, $"Swagger metadata is missing response {statusCode}");
+
+        var expectedProperties = ParseList(properties);
+        var propertyInfo = matchingResponse!.GetType().GetProperty("Properties");
+        var actualProperties = propertyInfo == null ? Array.Empty<string>() : ExtractStrings(propertyInfo.GetValue(matchingResponse));
+
+        if (expectedProperties.Count == 0)
+        {
+            Assert.That(actualProperties, Is.Empty, $"Response {statusCode} should have an empty body");
+        }
+        else
+        {
+            CollectionAssert.AreEquivalent(expectedProperties, actualProperties, $"Swagger metadata response {statusCode} mismatch");
+        }
     }
 
     [Given("a null endpoint route builder")]
@@ -259,5 +318,55 @@ public class CrudQlEndpointMappingSteps
         }
 
         return null;
+    }
+
+    private object GetCrudDocumentationMetadata()
+    {
+        Assert.That(selectedEndpoint, Is.Not.Null, "Endpoint must be selected before checking Swagger metadata");
+        var metadata = selectedEndpoint!.Metadata.FirstOrDefault(item =>
+            item?.GetType().Name == "CrudQlOperationDocumentation");
+        Assert.That(metadata, Is.Not.Null, "CrudQL Swagger metadata was not registered for the endpoint");
+        return metadata!;
+    }
+
+    private static IReadOnlyCollection<string> ExtractStringCollection(object source, string propertyName)
+    {
+        var property = source.GetType().GetProperty(propertyName);
+        Assert.That(property, Is.Not.Null, $"Property '{propertyName}' was not found on Swagger metadata");
+        var value = property!.GetValue(source);
+        return ExtractStrings(value);
+    }
+
+    private static string[] ExtractStrings(object? value)
+    {
+        if (value is not IEnumerable enumerable)
+        {
+            return Array.Empty<string>();
+        }
+
+        var list = new List<string>();
+        foreach (var item in enumerable)
+        {
+            if (item is string text && !string.IsNullOrWhiteSpace(text))
+            {
+                list.Add(text);
+            }
+        }
+
+        return list.ToArray();
+    }
+
+    private static IReadOnlyCollection<string> ParseList(string value)
+    {
+        if (string.Equals(value, "(empty body)", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(value))
+        {
+            return Array.Empty<string>();
+        }
+
+        return value.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(item => item.Trim())
+            .Where(item => item.Length > 0)
+            .ToArray();
     }
 }
