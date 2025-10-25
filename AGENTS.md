@@ -63,3 +63,4 @@ Always include the complete Given/When/Then steps for every scenario listed.
 - Bundle related changes in a single commit; avoid mixing refactors and feature work without clear justification.
 - Whenever preparing a pull request, include a bulleted section aimed at end users that highlights the key library changes.
 - Commits and pull requests can be created using the `gh` command in Bash, and always pass `--fill` when creating pull requests.
+- When opening a pull request from main to nuget, always specify `--head main --head nuget` so `--fill` reflects only the latest differences.

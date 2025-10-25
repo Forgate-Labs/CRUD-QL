@@ -102,7 +102,8 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         dbContext.Add(entity);
         await dbContext.SaveChangesAsync(context.RequestAborted);
-        var projection = CrudEntityExecutor.Project(entity, returning);
+        var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Create);
+        var projection = CrudEntityExecutor.Project(entity, returning, projectionContext);
         await Results.Json(new { data = projection }, SerializerOptions, null, StatusCodes.Status201Created).ExecuteAsync(context);
     }
 
@@ -154,7 +155,8 @@ public static class CrudQlEndpointRouteBuilderExtensions
         var select = ResolveSelectFields(root, context.Request.Query);
         var cast = Queryable.Cast<object>(queryable);
         var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
-        var data = entities.Select(item => CrudEntityExecutor.Project(item!, select)).ToList();
+        var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
+        var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
         await Results.Json(new { data }, SerializerOptions).ExecuteAsync(context);
     }
 
@@ -908,31 +910,49 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return true;
         }
 
-        public static Dictionary<string, object?> Project(object entity, IReadOnlyCollection<string>? fields)
+        public static Dictionary<string, object?> Project(object entity, IReadOnlyCollection<string>? fields, ProjectionContext? projection)
         {
             var metadata = GetMetadata(entity.GetType());
             var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            if (fields == null || fields.Count == 0)
-            {
-                foreach (var field in metadata.DefaultFields)
-                {
-                    var property = metadata.Properties[field];
-                    result[field] = property.GetValue(entity);
-                }
+            var selectedFields = fields == null || fields.Count == 0
+                ? metadata.DefaultFields
+                : (IEnumerable<string>)fields;
 
-                return result;
-            }
-
-            foreach (var field in fields)
+            foreach (var field in selectedFields)
             {
                 if (metadata.Properties.TryGetValue(field, out var property))
                 {
                     var key = metadata.ResolveFieldName(field);
-                    result[key] = property.GetValue(entity);
+                    var value = property.GetValue(entity);
+                    if (projection != null && projection.ShouldMask(key))
+                    {
+                        result[key] = projection.SuppressionValue;
+                        continue;
+                    }
+
+                    result[key] = value;
                 }
             }
 
             return result;
+        }
+
+        public static ProjectionContext? ResolveProjection(HttpContext context, CrudEntityRegistration registration, CrudAction action)
+        {
+            var policy = registration.Policy as ICrudProjectionPolicy;
+            if (policy == null)
+            {
+                return null;
+            }
+
+            var user = context.User ?? new ClaimsPrincipal(new ClaimsIdentity());
+            var rule = policy.ResolveProjection(user, action);
+            if (rule == null || rule.Fields.Count == 0)
+            {
+                return null;
+            }
+
+            return new ProjectionContext(rule.Fields, rule.SuppressionValue);
         }
 
         private static object GetDbSet(DbContext dbContext, Type entityType)
@@ -973,6 +993,29 @@ public static class CrudQlEndpointRouteBuilderExtensions
             }
 
             return new EntityMetadata(map, defaults);
+        }
+
+        internal sealed class ProjectionContext
+        {
+            private readonly HashSet<string> allowedFields;
+
+            public ProjectionContext(IReadOnlyCollection<string> fields, string suppressionValue)
+            {
+                allowedFields = new HashSet<string>(fields, StringComparer.OrdinalIgnoreCase);
+                SuppressionValue = suppressionValue;
+            }
+
+            public string SuppressionValue { get; }
+
+            public bool ShouldMask(string field)
+            {
+                if (allowedFields.Count == 0)
+                {
+                    return false;
+                }
+
+                return !allowedFields.Contains(field);
+            }
         }
 
         private static bool TryConvertValue(Type targetType, JsonElement element, out object? value)
