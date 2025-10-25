@@ -23,6 +23,25 @@ Feature: Product validation
       | Keyboard | Mechanical 60% | 450   |
       | Mouse    | Wireless       | 199   |
 
+  Scenario: Create rejects unknown Product fields
+    Given the product catalog is empty
+    When I attempt to create a raw Product payload with unknown fields through POST /crud expecting BadRequest
+      | field | value       |
+      | title | Mouse Pro   |
+      | genre | Accessories |
+    Then the last response status is BadRequest
+    And the last response reports unknown Product fields title,genre
+
+  Scenario: Create rejects unknown Product fields even with a validator
+    Given the Product create validator requires name and positive price
+    And the product catalog is empty
+    When I attempt to create a raw Product payload with unknown fields through POST /crud expecting BadRequest
+      | field    | value      |
+      | synopsis | Great item |
+      | title    | Mouse Pro  |
+    Then the last response status is BadRequest
+    And the last response reports unknown Product fields synopsis,title
+
   Scenario: Update validator rejects negative price
     Given the Product update validator requires positive price
     And the product catalog is empty
