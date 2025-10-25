@@ -78,6 +78,18 @@ Feature: Product validation
       | price | gte | -10   |
     Then the last response status is BadRequest
 
+  Scenario: Read rejects unknown select fields from query string
+    Given the product catalog is empty
+    When I attempt to read products through GET /crud expecting BadRequest selecting foobar
+    Then the last response status is BadRequest
+    And the last response reports unknown Product fields foobar
+
+  Scenario: Read rejects unknown select fields from payload
+    Given the product catalog is empty
+    When I attempt to read products through GET /crud with payload select expecting BadRequest selecting title
+    Then the last response status is BadRequest
+    And the last response reports unknown Product fields title
+
   Scenario: Read validator accepts non-negative price filter
     Given the Product read filter validator requires non-negative price
     And the product catalog is empty

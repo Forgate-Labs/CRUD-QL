@@ -153,6 +153,11 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         var select = ResolveSelectFields(root, context.Request.Query);
+        if (!CrudEntityExecutor.TryValidateSelect(registration, select, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
         var cast = Queryable.Cast<object>(queryable);
         var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
         var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
@@ -690,6 +695,38 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
             error = null;
             return true;
+        }
+
+        public static bool TryValidateSelect(CrudEntityRegistration registration, IReadOnlyCollection<string>? select, out IResult? error)
+        {
+            if (select == null || select.Count == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            var metadata = GetMetadata(registration.ClrType);
+            var unknown = new List<string>();
+            foreach (var field in select)
+            {
+                if (!metadata.Properties.ContainsKey(field))
+                {
+                    unknown.Add(field);
+                }
+            }
+
+            if (unknown.Count == 0)
+            {
+                error = null;
+                return true;
+            }
+
+            error = Results.Json(
+                new { message = "Unknown fields in payload", entity = registration.EntityName, fields = unknown },
+                SerializerOptions,
+                null,
+                StatusCodes.Status400BadRequest);
+            return false;
         }
 
         private static List<string> ResolveUnknownFields(EntityMetadata metadata, JsonElement input)

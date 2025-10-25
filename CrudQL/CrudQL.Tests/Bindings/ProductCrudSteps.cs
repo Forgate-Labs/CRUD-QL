@@ -312,6 +312,32 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(response.StatusCode, Is.EqualTo(expected));
     }
 
+    [When(@"I attempt to read products through GET \/crud with payload select expecting (.+) selecting (.+)")]
+    public async Task WhenIAttemptToReadProductsThroughGetCrudWithPayloadSelectExpecting(string status, string fields)
+    {
+        var expected = ParseStatusCode(status);
+        var currentClient = EnsureClient();
+        var selectFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var payload = new ReadPayload("Product", null, selectFields);
+        var message = new HttpRequestMessage(HttpMethod.Get, "/crud?entity=Product")
+        {
+            Content = JsonContent.Create(payload, options: jsonOptions)
+        };
+        var response = await currentClient.SendAsync(message);
+        lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
+        Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");
+        if (expected == HttpStatusCode.OK)
+        {
+            var collection = TryDeserializeCollectionResponse(lastResponseBody);
+            lastProducts = collection?.Data;
+        }
+        else
+        {
+            lastProducts = null;
+        }
+    }
+
     [When("I read products through GET /crud with filter expecting (.+)")]
     public async Task WhenIReadProductsThroughGetCrudWithFilterExpecting(string status, Table table)
     {
