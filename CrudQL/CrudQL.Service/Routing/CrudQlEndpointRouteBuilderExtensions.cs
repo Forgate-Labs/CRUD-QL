@@ -33,10 +33,10 @@ public static class CrudQlEndpointRouteBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        endpoints.MapPost(CrudRoute, HandleCreate);
-        endpoints.MapGet(CrudRoute, HandleRead);
-        endpoints.MapPut(CrudRoute, HandleUpdate);
-        endpoints.MapDelete(CrudRoute, HandleDelete);
+        endpoints.MapPost(CrudRoute, HandleCreate).WithCrudQlDocumentation(CrudAction.Create);
+        endpoints.MapGet(CrudRoute, HandleRead).WithCrudQlDocumentation(CrudAction.Read);
+        endpoints.MapPut(CrudRoute, HandleUpdate).WithCrudQlDocumentation(CrudAction.Update);
+        endpoints.MapDelete(CrudRoute, HandleDelete).WithCrudQlDocumentation(CrudAction.Delete);
 
         return endpoints;
     }
