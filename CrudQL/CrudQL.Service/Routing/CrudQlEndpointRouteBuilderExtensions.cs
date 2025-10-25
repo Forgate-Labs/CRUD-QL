@@ -658,6 +658,19 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         public static bool TryDeserializeEntity(CrudEntityRegistration registration, JsonElement input, out object entity, out IResult? error)
         {
+            var metadata = GetMetadata(registration.ClrType);
+            var unknownFields = ResolveUnknownFields(metadata, input);
+            if (unknownFields.Count > 0)
+            {
+                entity = default!;
+                error = Results.Json(
+                    new { message = "Unknown fields in payload", entity = registration.EntityName, fields = unknownFields },
+                    SerializerOptions,
+                    null,
+                    StatusCodes.Status400BadRequest);
+                return false;
+            }
+
             try
             {
                 entity = JsonSerializer.Deserialize(input.GetRawText(), registration.ClrType, SerializerOptions)!;
@@ -677,6 +690,25 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
             error = null;
             return true;
+        }
+
+        private static List<string> ResolveUnknownFields(EntityMetadata metadata, JsonElement input)
+        {
+            var unknown = new List<string>();
+            if (input.ValueKind != JsonValueKind.Object)
+            {
+                return unknown;
+            }
+
+            foreach (var property in input.EnumerateObject())
+            {
+                if (!metadata.Properties.ContainsKey(property.Name))
+                {
+                    unknown.Add(property.Name);
+                }
+            }
+
+            return unknown;
         }
 
         public static async Task<object?> FindAsync(DbContext dbContext, CrudEntityRegistration registration, int id, CancellationToken cancellationToken)
