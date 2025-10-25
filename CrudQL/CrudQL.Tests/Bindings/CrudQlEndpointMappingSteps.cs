@@ -13,7 +13,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using System.Globalization;
 using NUnit.Framework;
 using Reqnroll;
 
@@ -52,8 +51,8 @@ public class CrudQlEndpointMappingSteps
         CollectionAssert.AreEquivalent(expectedFields, actualFields, "Swagger payload fields mismatch");
     }
 
-    [Then(@"the Swagger metadata for (.*) should describe the ""(\d{3})"" response with ""(.*)""")]
-    public void ThenTheSwaggerMetadataShouldDescribeTheResponse(string verb, string status, string properties)
+    [Then(@"the Swagger metadata for (.*) should describe the ""{int}"" response with ""(.*)""")]
+    public void ThenTheSwaggerMetadataShouldDescribeTheResponse(string verb, int status, string properties)
     {
         var metadata = GetCrudDocumentationMetadata();
         var method = metadata.GetType().GetProperty("Method")?.GetValue(metadata) as string;
@@ -64,7 +63,7 @@ public class CrudQlEndpointMappingSteps
         var responses = responsesProperty!.GetValue(metadata) as IEnumerable;
         Assert.That(responses, Is.Not.Null, "Swagger metadata responses are missing");
 
-        var statusCode = int.Parse(status, CultureInfo.InvariantCulture);
+        var statusCode = status;
         object? matchingResponse = null;
         foreach (var response in responses!)
         {
