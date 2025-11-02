@@ -18,6 +18,8 @@ public interface ICrudEntityRegistry
 
     void AddValidator(Type entityType, Type targetType, IValidator validator, IReadOnlyCollection<CrudAction> actions);
 
+    void AddInclude(Type entityType, string includePath, IReadOnlyCollection<string>? roles);
+
     DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class;
 
     bool TryGetEntity(string entityName, out CrudEntityRegistration registration);

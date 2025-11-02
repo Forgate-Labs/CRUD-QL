@@ -38,4 +38,12 @@ public sealed class CrudEntityBuilder<TEntity>
         registry.AddValidator(typeof(TEntity), typeof(CrudFilterContext), validator, new[] { CrudAction.Read });
         return this;
     }
+
+    public CrudEntityBuilder<TEntity> AllowInclude(string includePath, params string[] roles)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(includePath);
+        var allowedRoles = roles is { Length: > 0 } ? roles : null;
+        registry.AddInclude(typeof(TEntity), includePath, allowedRoles);
+        return this;
+    }
 }

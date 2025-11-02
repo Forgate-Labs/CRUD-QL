@@ -14,7 +14,6 @@ It includes:
 - ✅ Query builder with filters, ordering, and pagination
 - ✅ Secure field projection (only exposes authorized fields)
 - ✅ Automatic entity registration (`.AddEntity<T>()`)
-- ✅ Extensible and transport-agnostic (JSON-QL today, GraphQL tomorrow)
 
 ---
 
@@ -39,13 +38,10 @@ This automatically enables endpoints such as:
 
 ## 🧩 Architecture
 
-CRUD-QL is organized into **five main layers**:
-
 1. **Transport** – HTTP endpoint (`/crud`) accepting JSON (JSON-QL)
-2. **Parsing / Schema** – Parses requests and validates entity/fields
+2. **Validation** – Parses requests and validates entity/fields
 3. **AuthN & AuthZ** – Authentication and policy-based authorization
-4. **Validation** – FluentValidation per entity and operation
-5. **Execution** – Expression Tree builder → EF Core → materialization
+4. **Execution** – Expression Tree builder → EF Core → materialization
 
 ---
 
@@ -85,9 +81,78 @@ CRUD-QL is organized into **five main layers**:
 }
 ```
 
-`condition` mirrors the GET filter contract and the endpoint replies with the number of affected rows.
+---
+
+## 💡 Include Joins Tutorial
+
+CRUD-QL now supports entity joins on `GET /crud` through the `select` clause. Follow the steps below to enable includes safely.
+
+### 1. Map allowed includes during bootstrapping
+Use `AllowInclude` when registering each entity. Provide the navigation path and an optional list of roles that may request it.
+
+```csharp
+builder.Services.AddCrudQl()
+    .AddEntity<Product>(cfg =>
+    {
+        cfg.AllowInclude("category", "catalog-admin");
+        cfg.AllowInclude("category.products");
+    })
+    .AddEntity<Category>()
+    .AddEntitiesFromDbContext<AppDbContext>();
+```
+
+- Paths follow the EF Core navigation chain (`category`, `category.products`, `category.products.supplier`, ...).
+- When no roles are supplied the include is available to every caller. Supplying one or more roles restricts usage to principals containing at least one matching `ClaimTypes.Role`.
+
+### 2. Issue a read request with nested `select`
+Request the relationship using an object inside the `select` array. This example retrieves a product with its category fields:
+
+```json
+{
+  "entity": "Product",
+  "select": [
+    "id",
+    "name",
+    { "category": ["id", "title"] }
+  ]
+}
+```
+
+Endpoints can still accept the same shape via the `select` query string parameter by providing a JSON fragment.
+
+### 3. Understand authorization feedback
+- If a caller requests an include that is not registered via `AllowInclude`, the service returns **422 Unprocessable Entity** with the message `Include '<path>' is not allowed for the current user`.
+- Unknown scalar or navigation fields continue to yield **400 Bad Request**.
+
+### 4. Chaining deeper relationships
+Once a path segment is allowed, you can expose deeper joins by registering the longer path. For example:
+
+```csharp
+cfg.AllowInclude("category");
+cfg.AllowInclude("category.products");
+cfg.AllowInclude("category.products.category");
+```
+
+Clients may then request:
+
+```json
+{
+  "entity": "Product",
+  "select": [
+    "id",
+    { "category": [
+        "title",
+        { "products": ["id", "name"] }
+      ]
+    }
+  ]
+}
+```
+
+This keeps the `/crud` surface single-route while empowering callers to shape responses within the guardrails that you configure.
 
 ---
+
 
 ## 🔐 Authentication & Authorization
 

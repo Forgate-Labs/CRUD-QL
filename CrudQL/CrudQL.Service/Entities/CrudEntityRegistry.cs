@@ -119,6 +119,36 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         }
     }
 
+    public void AddInclude(Type entityType, string includePath, IReadOnlyCollection<string>? roles)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(includePath);
+
+        var segments = includePath.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+        {
+            throw new ArgumentException("Include path must contain at least one segment.", nameof(includePath));
+        }
+
+        lock (gate)
+        {
+            if (registrations.TryGetValue(entityType, out var existing))
+            {
+                var updated = existing with { Includes = MergeIncludes(existing.Includes, segments, roles) };
+                registrations[entityType] = updated;
+                registrationsByName[updated.EntityName] = updated;
+                return;
+            }
+
+            var registration = new CrudEntityRegistration(entityType.Name, entityType)
+            {
+                Includes = MergeIncludes(new Dictionary<string, CrudEntityIncludeRegistration>(StringComparer.OrdinalIgnoreCase), segments, roles)
+            };
+            registrations[entityType] = registration;
+            registrationsByName[registration.EntityName] = registration;
+        }
+    }
+
     public DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
@@ -181,5 +211,85 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
             pair => pair.Key,
             pair => (IReadOnlyList<CrudValidatorRegistration>)pair.Value.ToList(),
             EqualityComparer<CrudAction>.Default);
+    }
+
+    private static IReadOnlyDictionary<string, CrudEntityIncludeRegistration> MergeIncludes(
+        IReadOnlyDictionary<string, CrudEntityIncludeRegistration> existing,
+        IReadOnlyList<string> segments,
+        IReadOnlyCollection<string>? roles)
+    {
+        var target = CopyIncludes(existing);
+        AddIncludeSegment(target, segments, 0, roles);
+        return CopyIncludes(target);
+    }
+
+    private static void AddIncludeSegment(
+        IDictionary<string, CrudEntityIncludeRegistration> target,
+        IReadOnlyList<string> segments,
+        int index,
+        IReadOnlyCollection<string>? roles)
+    {
+        var segment = segments[index];
+        target.TryGetValue(segment, out var existing);
+        var normalizedRoles = NormalizeRoles(roles);
+        var children = existing != null
+            ? CopyIncludes(existing.Children)
+            : new Dictionary<string, CrudEntityIncludeRegistration>(StringComparer.OrdinalIgnoreCase);
+
+        var mergedRoles = existing == null ? normalizedRoles : MergeRoles(existing.Roles, normalizedRoles);
+        if (index < segments.Count - 1)
+        {
+            AddIncludeSegment(children, segments, index + 1, normalizedRoles);
+        }
+
+        target[segment] = new CrudEntityIncludeRegistration(segment, mergedRoles, CopyIncludes(children));
+    }
+
+    private static IReadOnlyCollection<string>? MergeRoles(IReadOnlyCollection<string>? existing, IReadOnlyCollection<string>? incoming)
+    {
+        if (incoming == null)
+        {
+            return null;
+        }
+
+        if (existing == null)
+        {
+            return incoming;
+        }
+
+        var set = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+        foreach (var role in incoming)
+        {
+            set.Add(role);
+        }
+
+        return set.ToArray();
+    }
+
+    private static IReadOnlyCollection<string>? NormalizeRoles(IReadOnlyCollection<string>? roles)
+    {
+        if (roles == null)
+        {
+            return null;
+        }
+
+        var set = new HashSet<string>(roles, StringComparer.OrdinalIgnoreCase);
+        if (set.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return set.ToArray();
+    }
+
+    private static Dictionary<string, CrudEntityIncludeRegistration> CopyIncludes(IReadOnlyDictionary<string, CrudEntityIncludeRegistration> source)
+    {
+        var result = new Dictionary<string, CrudEntityIncludeRegistration>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in source)
+        {
+            result[pair.Key] = pair.Value;
+        }
+
+        return result;
     }
 }
