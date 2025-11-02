@@ -14,7 +14,14 @@ It includes:
 - ✅ Query builder with filters, ordering, and pagination
 - ✅ Secure field projection (only exposes authorized fields)
 - ✅ Automatic entity registration (`.AddEntity<T>()`)
-- ✅ Extensible and transport-agnostic (JSON-QL today, GraphQL tomorrow)
+
+---
+
+## 📚 Documentation
+
+Looking for end-to-end usage, configuration, and examples? See the wiki:
+
+- https://github.com/Forgate-Labs/CRUD-QL/wiki
 
 ---
 
@@ -39,115 +46,16 @@ This automatically enables endpoints such as:
 
 ## 🧩 Architecture
 
-CRUD-QL is organized into **five main layers**:
-
 1. **Transport** – HTTP endpoint (`/crud`) accepting JSON (JSON-QL)
-2. **Parsing / Schema** – Parses requests and validates entity/fields
+2. **Validation** – Parses requests and validates entity/fields
 3. **AuthN & AuthZ** – Authentication and policy-based authorization
-4. **Validation** – FluentValidation per entity and operation
-5. **Execution** – Expression Tree builder → EF Core → materialization
-
----
-
-## 📦 JSON-QL Examples
-
-### Read
-```json
-{
-  "entity": "Product",
-  "select": ["id", "name", "price", { "category": ["id", "title"] }],
-  "filter": {
-    "and": [
-      { "field": "price", "op": "gte", "value": 10.0 },
-      { "field": "name", "op": "contains", "value": "pro" }
-    ]
-  },
-  "orderBy": [{ "field": "price", "dir": "desc" }],
-  "page": { "size": 20 }
-}
-```
-
-### Create
-```json
-{
-  "entity": "Product",
-  "input": { "name": "Mouse Pro", "description": "Wireless", "price": 129.9, "currency": "USD" },
-  "returning": ["id", "name", "description", "price", "currency"]
-}
-```
-
-### Update
-```json
-{
-  "entity": "Product",
-  "condition": { "field": "id", "op": "eq", "value": 42 },
-  "update": { "description": "Low profile 60%", "price": 430.0 }
-}
-```
-
-`condition` mirrors the GET filter contract and the endpoint replies with the number of affected rows.
-
----
-
-## 🔐 Authentication & Authorization
-
-### RBAC (Role-Based Access Control)
-Each user role maps to allowed actions (`Read`, `Create`, `Update`, `Delete`).
-
-### ABAC (Attribute-Based Access Control)
-Rules are defined per entity row or field, such as:
-> `Product.TenantId == user.TenantId`
-
-## 🧾 Validation (FluentValidation)
-
-Each entity can define specific validators per operation:
-
-```csharp
-public class ProductCreateValidator : AbstractValidator<Product>
-{
-    public ProductCreateValidator()
-    {
-        RuleFor(x => x.Name).NotEmpty().MaximumLength(120);
-        RuleFor(x => x.Price).GreaterThanOrEqualTo(0);
-    }
-}
-```
-
-Validators automatically run in the CRUD pipelines.
-
-Register validators with `cfg.UseValidator(...)` while adding your entity. When no action is provided the validator is attached to the create pipeline; pass one or more `CrudAction` values to target update and delete operations as needed.
-
----
-
-## 🧮 Query Builder (Expression Trees)
-
-Filters are dynamically converted to LINQ expressions.
-
-Example filter:
-```json
-{
-  "and": [
-    { "field": "price", "op": "gte", "value": 10 },
-    { "field": "name", "op": "contains", "value": "Pro" }
-  ]
-}
-```
-
-Becomes:
-```csharp
-x => x.Price >= 10 && x.Name.Contains("Pro")
-```
+4. **Execution** – Expression Tree builder → EF Core → materialization
 
 ---
 
 ## 🧱 Automatic Entity Registration
 
-```csharp
-builder.Services.AddCrudQl()
-    .AddEntitiesFromDbContext<AppDbContext>();
-```
-
-Every `DbSet<T>` implementing `IEntity<TKey>` is automatically discovered and registered with validators and policies.
+CRUD-QL supports automatic entity registration and policy/validator wiring from your `DbContext`.
 
 ---
 
@@ -176,32 +84,6 @@ Every `DbSet<T>` implementing `IEntity<TKey>` is automatically discovered and re
 - [ ] Automatic keyset pagination  
 
 ---
-
-## 📊 Full Example
-
-```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddAuthentication("Bearer").AddJwtBearer();
-builder.Services.AddAuthorization();
-builder.Services.AddDbContext<AppDbContext>();
-
-builder.Services.AddCrudQl()
-    .AddEntity<Product>(cfg =>
-    {
-        cfg.UseValidator(new ProductCreateValidator());
-        cfg.UseValidator(new ProductUpdateValidator(), CrudAction.Update);
-        cfg.UseValidator(new ProductDeleteValidator(), CrudAction.Delete);
-        cfg.UsePolicy(new ProductPolicy());
-    })
-    .AddEntitiesFromDbContext<AppDbContext>();
-
-var app = builder.Build();
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapCrudQl(); // Exposes /crud endpoint
-app.Run();
-```
 
 ---
 

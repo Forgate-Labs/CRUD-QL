@@ -16,4 +16,7 @@ public sealed record CrudEntityRegistration(string EntityName, Type ClrType)
 
     public IReadOnlyDictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>> Validators { get; init; } =
         new Dictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>>();
+
+    public IReadOnlyDictionary<string, CrudEntityIncludeRegistration> Includes { get; init; } =
+        new Dictionary<string, CrudEntityIncludeRegistration>(StringComparer.OrdinalIgnoreCase);
 }

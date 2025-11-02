@@ -11,4 +11,8 @@ public class Product
     public decimal Price { get; set; }
 
     public string Currency { get; set; } = string.Empty;
+
+    public int? CategoryId { get; set; }
+
+    public Category? Category { get; set; }
 }

@@ -152,12 +152,24 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
-        var select = ResolveSelectFields(root, context.Request.Query);
-        if (!CrudEntityExecutor.TryValidateSelect(registration, select, out error))
+        if (!TryResolveSelect(root, context.Request.Query, out var select, out error))
         {
             await error!.ExecuteAsync(context);
             return;
         }
+
+        var user = context.User ?? new ClaimsPrincipal(new ClaimsIdentity());
+        if (!CrudEntityExecutor.TryValidateSelect(user, registration, select, out var includePaths, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (includePaths.Count > 0)
+        {
+            queryable = CrudEntityExecutor.ApplyIncludes(queryable, registration.ClrType, includePaths);
+        }
+
         var cast = Queryable.Cast<object>(queryable);
         var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
         var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
@@ -386,20 +398,38 @@ public static class CrudQlEndpointRouteBuilderExtensions
         return false;
     }
 
-    private static IReadOnlyCollection<string>? ResolveSelectFields(JsonElement? root, IQueryCollection query)
+    private static bool TryResolveSelect(JsonElement? root, IQueryCollection query, out CrudEntityExecutor.SelectNode? select, out IResult? error)
     {
-        var fromBody = root.HasValue ? GetStringArray(root.Value, "select") : null;
-        if (fromBody != null)
+        if (root.HasValue &&
+            root.Value.ValueKind == JsonValueKind.Object &&
+            root.Value.TryGetProperty("select", out var selectElement))
         {
-            return fromBody;
+            if (selectElement.ValueKind != JsonValueKind.Array)
+            {
+                error = Results.BadRequest(new { message = "The 'select' element must be an array" });
+                select = null;
+                return false;
+            }
+
+            if (!CrudEntityExecutor.TryParseSelectArray(selectElement, out var parsed, out error))
+            {
+                select = null;
+                return false;
+            }
+
+            select = parsed.Fields == null && parsed.Includes.Count == 0 ? null : parsed;
+            return true;
         }
 
         if (!query.TryGetValue("select", out var values))
         {
-            return null;
+            select = null;
+            error = null;
+            return true;
         }
 
-        var items = new List<string>();
+        var fields = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var value in values)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -410,14 +440,23 @@ public static class CrudQlEndpointRouteBuilderExtensions
             foreach (var part in value.Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
                 var trimmed = part.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
+                if (string.IsNullOrEmpty(trimmed))
                 {
-                    items.Add(trimmed);
+                    continue;
+                }
+
+                if (seen.Add(trimmed))
+                {
+                    fields.Add(trimmed);
                 }
             }
         }
 
-        return items.Count == 0 ? null : items;
+        select = fields.Count == 0
+            ? null
+            : new CrudEntityExecutor.SelectNode(fields, CrudEntityExecutor.CreateEmptyIncludeMap());
+        error = null;
+        return true;
     }
 
     private static IReadOnlyCollection<string>? GetStringArray(JsonElement root, string propertyName)
@@ -482,6 +521,8 @@ public static class CrudQlEndpointRouteBuilderExtensions
         private static readonly ConcurrentDictionary<Type, Func<DbContext, object>> DbSetAccessors = new();
         private static readonly MethodInfo QueryableWhereMethod = typeof(Queryable).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(method => method.Name == nameof(Queryable.Where) && method.GetParameters().Length == 2);
+        private static readonly MethodInfo IncludeStringMethod = typeof(EntityFrameworkQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(method => method.Name == nameof(EntityFrameworkQueryableExtensions.Include) && method.GetParameters().Length == 2 && method.GetParameters()[1].ParameterType == typeof(string));
         private static readonly MethodInfo ToListAsyncMethodDefinition = typeof(EntityFrameworkQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(method => method.Name == nameof(EntityFrameworkQueryableExtensions.ToListAsync) && method.GetParameters().Length == 2);
         private static readonly ConcurrentDictionary<Type, Func<object, IValidationContext>> ValidationContextFactories = new();
@@ -697,36 +738,368 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return true;
         }
 
-        public static bool TryValidateSelect(CrudEntityRegistration registration, IReadOnlyCollection<string>? select, out IResult? error)
+        public static bool TryValidateSelect(
+            ClaimsPrincipal user,
+            CrudEntityRegistration registration,
+            SelectNode? select,
+            out IReadOnlyCollection<string> includePaths,
+            out IResult? error)
         {
-            if (select == null || select.Count == 0)
+            if (select == null)
             {
+                includePaths = Array.Empty<string>();
                 error = null;
                 return true;
             }
 
-            var metadata = GetMetadata(registration.ClrType);
-            var unknown = new List<string>();
-            foreach (var field in select)
+            var userRoles = ResolveUserRoles(user);
+            var includeList = new List<string>();
+            var includeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!ValidateSelectNode(
+                    registration.ClrType,
+                    registration.EntityName,
+                    select,
+                    registration.Includes,
+                    userRoles,
+                    null,
+                    null,
+                    includeList,
+                    includeSet,
+                    out error))
             {
-                if (!metadata.Properties.ContainsKey(field))
+                includePaths = Array.Empty<string>();
+                return false;
+            }
+
+            includePaths = includeList;
+            error = null;
+            return true;
+        }
+
+        public static bool TryParseSelectArray(JsonElement element, out SelectNode select, out IResult? error)
+        {
+            var builder = new SelectNodeBuilder();
+            if (!builder.TryRead(element, out error))
+            {
+                select = default!;
+                return false;
+            }
+
+            select = builder.Build();
+            return true;
+        }
+
+        public static IReadOnlyDictionary<string, SelectNode> CreateEmptyIncludeMap()
+        {
+            return new Dictionary<string, SelectNode>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        public static IQueryable ApplyIncludes(IQueryable queryable, Type entityType, IReadOnlyCollection<string> includePaths)
+        {
+            if (includePaths.Count == 0)
+            {
+                return queryable;
+            }
+
+            var method = IncludeStringMethod.MakeGenericMethod(entityType);
+            foreach (var path in includePaths)
+            {
+                queryable = (IQueryable)method.Invoke(null, new object[] { queryable, path })!;
+            }
+
+            return queryable;
+        }
+
+        private static bool ValidateSelectNode(
+            Type entityType,
+            string entityName,
+            SelectNode node,
+            IReadOnlyDictionary<string, CrudEntityIncludeRegistration> allowedIncludes,
+            HashSet<string> userRoles,
+            string? requestedParentPath,
+            string? canonicalParentPath,
+            List<string> includePaths,
+            HashSet<string> includeSet,
+            out IResult? error)
+        {
+            var metadata = GetMetadata(entityType);
+            if (node.Fields != null)
+            {
+                var unknown = new List<string>();
+                foreach (var field in node.Fields)
                 {
-                    unknown.Add(field);
+                    if (!metadata.Properties.ContainsKey(field))
+                    {
+                        unknown.Add(field);
+                    }
+                }
+
+                if (unknown.Count > 0)
+                {
+                    error = Results.Json(
+                        new { message = "Unknown fields in payload", entity = entityName, fields = unknown },
+                        SerializerOptions,
+                        null,
+                        StatusCodes.Status400BadRequest);
+                    return false;
                 }
             }
 
-            if (unknown.Count == 0)
+            foreach (var include in node.Includes)
             {
+                var requestedSegment = include.Key;
+                if (!metadata.Properties.TryGetValue(requestedSegment, out var property))
+                {
+                    error = Results.Json(
+                        new { message = "Unknown fields in payload", entity = entityName, fields = new[] { requestedSegment } },
+                        SerializerOptions,
+                        null,
+                        StatusCodes.Status400BadRequest);
+                    return false;
+                }
+
+                var canonicalSegment = property.Name;
+                if (!allowedIncludes.TryGetValue(requestedSegment, out var includeRegistration))
+                {
+                    var requestedPath = BuildIncludePath(requestedParentPath, requestedSegment);
+                    error = Results.Json(
+                        new { message = $"Include '{requestedPath}' is not allowed for the current user" },
+                        SerializerOptions,
+                        null,
+                        StatusCodes.Status422UnprocessableEntity);
+                    return false;
+                }
+
+                if (!IsNavigationProperty(property.PropertyType))
+                {
+                    var requestedPath = BuildIncludePath(requestedParentPath, requestedSegment);
+                    error = Results.Json(
+                        new { message = $"Include '{requestedPath}' targets a non-navigation property" },
+                        SerializerOptions,
+                        null,
+                        StatusCodes.Status400BadRequest);
+                    return false;
+                }
+
+                if (includeRegistration.Roles != null &&
+                    includeRegistration.Roles.Count > 0 &&
+                    !HasRequiredRole(userRoles, includeRegistration.Roles))
+                {
+                    var requestedPath = BuildIncludePath(requestedParentPath, requestedSegment);
+                    error = Results.Json(
+                        new { message = $"Include '{requestedPath}' is not allowed for the current user" },
+                        SerializerOptions,
+                        null,
+                        StatusCodes.Status422UnprocessableEntity);
+                    return false;
+                }
+
+                var canonicalPath = BuildIncludePath(canonicalParentPath, canonicalSegment);
+                if (includeSet.Add(canonicalPath))
+                {
+                    includePaths.Add(canonicalPath);
+                }
+
+                var requestedPathForChildren = BuildIncludePath(requestedParentPath, requestedSegment);
+                var childType = ResolveNavigationType(property.PropertyType);
+                var childEntityName = childType.Name;
+                if (!ValidateSelectNode(
+                        childType,
+                        childEntityName,
+                        include.Value,
+                        includeRegistration.Children,
+                        userRoles,
+                        requestedPathForChildren,
+                        canonicalPath,
+                        includePaths,
+                        includeSet,
+                        out error))
+                {
+                    return false;
+                }
+            }
+
+            error = null;
+            return true;
+        }
+
+        private static HashSet<string> ResolveUserRoles(ClaimsPrincipal user)
+        {
+            var roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (user == null)
+            {
+                return roles;
+            }
+
+            foreach (var claim in user.FindAll(ClaimTypes.Role))
+            {
+                if (!string.IsNullOrWhiteSpace(claim.Value))
+                {
+                    roles.Add(claim.Value);
+                }
+            }
+
+            return roles;
+        }
+
+        private static bool HasRequiredRole(HashSet<string> userRoles, IReadOnlyCollection<string> requiredRoles)
+        {
+            if (userRoles.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var role in requiredRoles)
+            {
+                if (userRoles.Contains(role))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string BuildIncludePath(string? parent, string segment)
+        {
+            return string.IsNullOrEmpty(parent) ? segment : $"{parent}.{segment}";
+        }
+
+        private static bool IsNavigationProperty(Type propertyType)
+        {
+            if (propertyType == typeof(string))
+            {
+                return false;
+            }
+
+            if (propertyType.IsArray)
+            {
+                var elementType = propertyType.GetElementType();
+                if (elementType == typeof(byte))
+                {
+                    return false;
+                }
+
+                return elementType != null && !elementType.IsValueType && elementType != typeof(char);
+            }
+
+            if (typeof(IEnumerable).IsAssignableFrom(propertyType) && propertyType != typeof(string))
+            {
+                var elementType = ResolveNavigationType(propertyType);
+                return !elementType.IsValueType && elementType != typeof(string);
+            }
+
+            return !propertyType.IsValueType;
+        }
+
+        private static Type ResolveNavigationType(Type propertyType)
+        {
+            if (propertyType.IsArray)
+            {
+                return propertyType.GetElementType() ?? propertyType;
+            }
+
+            if (propertyType.IsGenericType)
+            {
+                var argument = propertyType.GenericTypeArguments.FirstOrDefault();
+                if (argument != null)
+                {
+                    return argument;
+                }
+            }
+
+            var enumerableInterface = propertyType.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            if (enumerableInterface != null)
+            {
+                return enumerableInterface.GenericTypeArguments[0];
+            }
+
+            return propertyType;
+        }
+
+        private sealed class SelectNodeBuilder
+        {
+            private readonly HashSet<string> fields = new(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, SelectNodeBuilder> includes = new(StringComparer.OrdinalIgnoreCase);
+
+            public bool TryRead(JsonElement element, out IResult? error)
+            {
+                foreach (var item in element.EnumerateArray())
+                {
+                    switch (item.ValueKind)
+                    {
+                        case JsonValueKind.String:
+                            var field = item.GetString();
+                            if (!string.IsNullOrWhiteSpace(field))
+                            {
+                                fields.Add(field);
+                            }
+
+                            break;
+                        case JsonValueKind.Object:
+                            foreach (var property in item.EnumerateObject())
+                            {
+                                if (property.Value.ValueKind != JsonValueKind.Array)
+                                {
+                                    error = Results.BadRequest(new { message = $"Select include '{property.Name}' must be an array" });
+                                    return false;
+                                }
+
+                                var child = GetOrAddChild(property.Name);
+                                if (!child.TryRead(property.Value, out error))
+                                {
+                                    return false;
+                                }
+                            }
+
+                            break;
+                        default:
+                            error = Results.BadRequest(new { message = "Select entries must be strings or objects" });
+                            return false;
+                    }
+                }
+
                 error = null;
                 return true;
             }
 
-            error = Results.Json(
-                new { message = "Unknown fields in payload", entity = registration.EntityName, fields = unknown },
-                SerializerOptions,
-                null,
-                StatusCodes.Status400BadRequest);
-            return false;
+            public SelectNode Build()
+            {
+                IReadOnlyCollection<string>? builtFields = fields.Count > 0 ? fields.ToArray() : null;
+                var builtIncludes = new Dictionary<string, SelectNode>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in includes)
+                {
+                    builtIncludes[pair.Key] = pair.Value.Build();
+                }
+
+                return new SelectNode(builtFields, builtIncludes);
+            }
+
+            private SelectNodeBuilder GetOrAddChild(string name)
+            {
+                if (!includes.TryGetValue(name, out var child))
+                {
+                    child = new SelectNodeBuilder();
+                    includes[name] = child;
+                }
+
+                return child;
+            }
+        }
+
+        public sealed class SelectNode
+        {
+            public SelectNode(IReadOnlyCollection<string>? fields, IReadOnlyDictionary<string, SelectNode> includes)
+            {
+                Fields = fields;
+                Includes = includes;
+            }
+
+            public IReadOnlyCollection<string>? Fields { get; }
+
+            public IReadOnlyDictionary<string, SelectNode> Includes { get; }
         }
 
         private static List<string> ResolveUnknownFields(EntityMetadata metadata, JsonElement input)
@@ -981,25 +1354,75 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         public static Dictionary<string, object?> Project(object entity, IReadOnlyCollection<string>? fields, ProjectionContext? projection)
         {
+            SelectNode? select = null;
+            if (fields != null && fields.Count > 0)
+            {
+                select = new SelectNode(fields, CreateEmptyIncludeMap());
+            }
+
+            return Project(entity, select, projection);
+        }
+
+        public static Dictionary<string, object?> Project(object entity, SelectNode? select, ProjectionContext? projection)
+        {
             var metadata = GetMetadata(entity.GetType());
             var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            var selectedFields = fields == null || fields.Count == 0
-                ? metadata.DefaultFields
-                : (IEnumerable<string>)fields;
+            var fieldSet = select?.Fields ?? metadata.DefaultFields;
 
-            foreach (var field in selectedFields)
+            foreach (var field in fieldSet)
             {
-                if (metadata.Properties.TryGetValue(field, out var property))
+                if (!metadata.Properties.TryGetValue(field, out var property))
                 {
-                    var key = metadata.ResolveFieldName(field);
-                    var value = property.GetValue(entity);
-                    if (projection != null && projection.ShouldMask(key))
+                    continue;
+                }
+
+                var key = metadata.ResolveFieldName(field);
+                var value = property.GetValue(entity);
+                if (projection != null && projection.ShouldMask(key))
+                {
+                    result[key] = projection.SuppressionValue;
+                    continue;
+                }
+
+                result[key] = value;
+            }
+
+            if (select?.Includes != null)
+            {
+                foreach (var include in select.Includes)
+                {
+                    if (!metadata.Properties.TryGetValue(include.Key, out var property))
                     {
-                        result[key] = projection.SuppressionValue;
                         continue;
                     }
 
-                    result[key] = value;
+                    var key = metadata.ResolveFieldName(include.Key);
+                    var value = property.GetValue(entity);
+                    if (value == null)
+                    {
+                        result[key] = null;
+                        continue;
+                    }
+
+                    if (value is IEnumerable enumerable && value is not string)
+                    {
+                        var items = new List<object?>();
+                        foreach (var item in enumerable)
+                        {
+                            if (item == null)
+                            {
+                                items.Add(null);
+                                continue;
+                            }
+
+                            items.Add(Project(item, include.Value, null));
+                        }
+
+                        result[key] = items;
+                        continue;
+                    }
+
+                    result[key] = Project(value, include.Value, null);
                 }
             }
 
