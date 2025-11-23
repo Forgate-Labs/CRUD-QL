@@ -121,13 +121,10 @@ public sealed class ReadIncludesBindings : IDisposable
     public async Task WhenClientSendsReadRequest(string entity, string selectJson)
     {
         var currentClient = EnsureClient();
-        var payload = $@"{{""entity"":""{entity}"",""select"":{selectJson}}}";
-        var request = new HttpRequestMessage(HttpMethod.Get, "/crud")
-        {
-            Content = new StringContent(payload, Encoding.UTF8, "application/json")
-        };
+        var encodedSelect = Uri.EscapeDataString(selectJson);
+        var url = $"/crud?entity={entity}&select={encodedSelect}";
         lastResponse?.Dispose();
-        lastResponse = await currentClient.SendAsync(request);
+        lastResponse = await currentClient.GetAsync(url);
         lastDocument?.Dispose();
         if (lastResponse.Content.Headers.ContentLength is { } length && length == 0)
         {

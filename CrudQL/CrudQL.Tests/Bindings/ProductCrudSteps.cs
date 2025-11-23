@@ -367,12 +367,10 @@ public sealed class ProductCrudSteps : IDisposable
         var expected = ParseStatusCode(status);
         var currentClient = EnsureClient();
         var selectFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var payload = new ReadPayload("Product", null, selectFields);
-        var message = new HttpRequestMessage(HttpMethod.Get, "/crud?entity=Product")
-        {
-            Content = JsonContent.Create(payload, options: jsonOptions)
-        };
-        var response = await currentClient.SendAsync(message);
+        var selectJson = JsonSerializer.Serialize(selectFields, jsonOptions);
+        var encodedSelect = Uri.EscapeDataString(selectJson);
+        var url = $"/crud?entity=Product&select={encodedSelect}";
+        var response = await currentClient.GetAsync(url);
         lastStatusCode = response.StatusCode;
         lastResponseBody = await response.Content.ReadAsStringAsync();
         Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");
@@ -393,15 +391,11 @@ public sealed class ProductCrudSteps : IDisposable
         var expected = ParseStatusCode(status);
         var currentClient = EnsureClient();
         var filter = BuildFilterPayload(table);
-        var payload = new ReadPayload(
-            "Product",
-            filter,
-            new[] { "id", "name", "description", "price", "currency" });
-        var message = new HttpRequestMessage(HttpMethod.Get, "/crud?entity=Product")
-        {
-            Content = JsonContent.Create(payload, options: jsonOptions)
-        };
-        var response = await currentClient.SendAsync(message);
+        var filterJson = JsonSerializer.Serialize(filter, jsonOptions);
+        var encodedFilter = Uri.EscapeDataString(filterJson);
+        var select = "id,name,description,price,currency";
+        var url = $"/crud?entity=Product&filter={encodedFilter}&select={select}";
+        var response = await currentClient.GetAsync(url);
         lastStatusCode = response.StatusCode;
         lastResponseBody = await response.Content.ReadAsStringAsync();
         Assert.That(response.StatusCode, Is.EqualTo(expected), $"Response payload: {lastResponseBody}");

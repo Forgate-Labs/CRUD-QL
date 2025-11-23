@@ -119,3 +119,52 @@ Feature: Product authorization
     Then the response contains the updated products
       | Name     | Description    | Price |
       | Keyboard | Mechanical 60% | 450   |
+
+  Scenario: Multiple roles can all access when policy allows them
+    Given the Product policy allows only Admin, Support, Manager for CRUD actions
+    And the product catalog is empty
+    And the authenticated user has roles Admin
+    When I create the following products through POST /crud
+      | Name     | Description    | Price | Currency |
+      | Keyboard | Mechanical 60% | 450   | BRL      |
+    And the authenticated user has roles Support
+    When I create the following products through POST /crud
+      | Name  | Description | Price | Currency |
+      | Mouse | Wireless    | 199   | BRL      |
+    And the authenticated user has roles Manager
+    When I create the following products through POST /crud
+      | Name    | Description | Price | Currency |
+      | Monitor | 27 inches   | 1200  | BRL      |
+    And the authenticated user has roles Admin
+    When I GET /crud for Product selecting id,name,description,price,currency
+    Then the response contains the updated products
+      | Name     | Description    | Price |
+      | Keyboard | Mechanical 60% | 450   |
+      | Mouse    | Wireless       | 199   |
+      | Monitor  | 27 inches      | 1200  |
+
+  Scenario: Role not in policy is blocked even when multiple roles are allowed
+    Given the Product policy allows only Admin, Support, Manager for CRUD actions
+    And the authenticated user has roles Guest
+    And the product catalog is empty
+    When I attempt to create the following products through POST /crud expecting Unauthorized
+      | Name     | Description    | Price | Currency |
+      | Keyboard | Mechanical 60% | 450   | BRL      |
+    Then the last response status is Unauthorized
+
+  Scenario: User with single role can read products when policy allows multiple roles
+    Given the Product policy allows only Admin, Support, Manager for CRUD actions
+    And the product catalog is empty
+    And the authenticated user has roles Admin
+    When I create the following products through POST /crud
+      | Name     | Description    | Price | Currency |
+      | Keyboard | Mechanical 60% | 450   | BRL      |
+      | Mouse    | Wireless       | 199   | BRL      |
+      | Monitor  | 27 inches      | 1200  | BRL      |
+    And the authenticated user has roles Support
+    When I GET /crud for Product selecting id,name,description,price,currency
+    Then the response contains the updated products
+      | Name     | Description    | Price |
+      | Keyboard | Mechanical 60% | 450   |
+      | Mouse    | Wireless       | 199   |
+      | Monitor  | 27 inches      | 1200  |

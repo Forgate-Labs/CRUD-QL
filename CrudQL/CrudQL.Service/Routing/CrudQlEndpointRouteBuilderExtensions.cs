@@ -109,16 +109,7 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
     private static async Task HandleRead(HttpContext context, [FromServices] ICrudEntityRegistry registry)
     {
-        var body = await ParseBodyAsync(context.Request);
-        if (!body.IsValidJson && body.HasContent)
-        {
-            await Results.BadRequest(new { message = "Payload must be a JSON object" }).ExecuteAsync(context);
-            return;
-        }
-
-        var root = body.Root;
-
-        if (!TryResolveEntity(context, root, out var entityName, out var error))
+        if (!TryResolveEntity(context, null, out var entityName, out var error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -136,9 +127,24 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
-        var filterElement = root.HasValue && root.Value.ValueKind == JsonValueKind.Object && root.Value.TryGetProperty("filter", out var filterJson)
-            ? filterJson
-            : (JsonElement?)null;
+        JsonElement? filterElement = null;
+        if (context.Request.Query.TryGetValue("filter", out var filterValues))
+        {
+            var filterString = filterValues.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(filterString))
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(filterString);
+                    filterElement = document.RootElement.Clone();
+                }
+                catch (JsonException)
+                {
+                    await Results.BadRequest(new { message = "Invalid JSON in 'filter' query parameter" }).ExecuteAsync(context);
+                    return;
+                }
+            }
+        }
         var filterContext = new CrudFilterContext(entityName, registration.ClrType, filterElement);
         if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Read, filterContext, out error))
         {
@@ -158,7 +164,7 @@ public static class CrudQlEndpointRouteBuilderExtensions
             queryable = CrudEntityExecutor.ApplySoftDeleteFilter(queryable, registration.ClrType, softDeleteRule);
         }
 
-        if (!TryResolveSelect(root, context.Request.Query, out var select, out error))
+        if (!TryResolveSelect(null, context.Request.Query, out var select, out error))
         {
             await error!.ExecuteAsync(context);
             return;
@@ -421,32 +427,49 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
     private static bool TryResolveSelect(JsonElement? root, IQueryCollection query, out CrudEntityExecutor.SelectNode? select, out IResult? error)
     {
-        if (root.HasValue &&
-            root.Value.ValueKind == JsonValueKind.Object &&
-            root.Value.TryGetProperty("select", out var selectElement))
-        {
-            if (selectElement.ValueKind != JsonValueKind.Array)
-            {
-                error = Results.BadRequest(new { message = "The 'select' element must be an array" });
-                select = null;
-                return false;
-            }
-
-            if (!CrudEntityExecutor.TryParseSelectArray(selectElement, out var parsed, out error))
-            {
-                select = null;
-                return false;
-            }
-
-            select = parsed.Fields == null && parsed.Includes.Count == 0 ? null : parsed;
-            return true;
-        }
-
         if (!query.TryGetValue("select", out var values))
         {
             select = null;
             error = null;
             return true;
+        }
+
+        var selectString = values.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(selectString))
+        {
+            select = null;
+            error = null;
+            return true;
+        }
+
+        if (selectString.TrimStart().StartsWith("["))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(selectString);
+                var selectElement = document.RootElement.Clone();
+                if (selectElement.ValueKind != JsonValueKind.Array)
+                {
+                    error = Results.BadRequest(new { message = "The 'select' element must be an array" });
+                    select = null;
+                    return false;
+                }
+
+                if (!CrudEntityExecutor.TryParseSelectArray(selectElement, out var parsed, out error))
+                {
+                    select = null;
+                    return false;
+                }
+
+                select = parsed.Fields == null && parsed.Includes.Count == 0 ? null : parsed;
+                return true;
+            }
+            catch (JsonException)
+            {
+                error = Results.BadRequest(new { message = "Invalid JSON in 'select' query parameter" });
+                select = null;
+                return false;
+            }
         }
 
         var fields = new List<string>();

@@ -182,17 +182,25 @@ public class CrudQlEndpointMappingSteps
             seededId = await SeedEntityAsync(serviceProvider);
         }
 
-        var payload = CreatePayload(httpContext.Request.Method, seededId);
-        if (payload != null)
+        if (string.Equals(httpContext.Request.Method, HttpMethods.Get, StringComparison.OrdinalIgnoreCase))
         {
-            var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, SerializerOptions);
-            httpContext.Request.Body = new MemoryStream(payloadBytes, writable: false);
-            httpContext.Request.ContentLength = payloadBytes.Length;
-            httpContext.Request.ContentType = "application/json";
+            httpContext.Request.QueryString = new QueryString("?entity=Product&select=id,name,price");
+            httpContext.Request.Body = new MemoryStream();
         }
         else
         {
-            httpContext.Request.Body = new MemoryStream();
+            var payload = CreatePayload(httpContext.Request.Method, seededId);
+            if (payload != null)
+            {
+                var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(payload, SerializerOptions);
+                httpContext.Request.Body = new MemoryStream(payloadBytes, writable: false);
+                httpContext.Request.ContentLength = payloadBytes.Length;
+                httpContext.Request.ContentType = "application/json";
+            }
+            else
+            {
+                httpContext.Request.Body = new MemoryStream();
+            }
         }
 
         await requestDelegate!(httpContext);
