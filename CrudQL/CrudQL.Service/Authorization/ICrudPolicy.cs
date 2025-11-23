@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using System.Security.Claims;
 
 namespace CrudQL.Service.Authorization;
@@ -18,3 +19,10 @@ public interface ICrudProjectionPolicy
 }
 
 public sealed record CrudProjectionRule(IReadOnlyCollection<string> Fields, string SuppressionValue);
+
+public interface ISoftDeletePolicy
+{
+    CrudSoftDeleteRule? ResolveSoftDelete(CrudAction action);
+}
+
+public sealed record CrudSoftDeleteRule(PropertyInfo FlagProperty, PropertyInfo? TimestampProperty, bool UseUtc);

@@ -152,6 +152,12 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
+        var softDeleteRule = CrudEntityExecutor.ResolveSoftDeleteRule(registration);
+        if (softDeleteRule != null)
+        {
+            queryable = CrudEntityExecutor.ApplySoftDeleteFilter(queryable, registration.ClrType, softDeleteRule);
+        }
+
         if (!TryResolveSelect(root, context.Request.Query, out var select, out error))
         {
             await error!.ExecuteAsync(context);
@@ -322,6 +328,21 @@ public static class CrudQlEndpointRouteBuilderExtensions
         if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Delete, entity, out error))
         {
             await error!.ExecuteAsync(context);
+            return;
+        }
+
+        var softDeleteRule = CrudEntityExecutor.ResolveSoftDeleteRule(registration);
+        if (softDeleteRule != null)
+        {
+            if (CrudEntityExecutor.IsSoftDeleted(entity, softDeleteRule))
+            {
+                await Results.BadRequest(new { message = "Entity is already deleted" }).ExecuteAsync(context);
+                return;
+            }
+
+            CrudEntityExecutor.ApplySoftDelete(entity, softDeleteRule);
+            await dbContext.SaveChangesAsync(context.RequestAborted);
+            await Results.NoContent().ExecuteAsync(context);
             return;
         }
 
@@ -584,6 +605,58 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 null,
                 StatusCodes.Status401Unauthorized);
             return false;
+        }
+
+        public static CrudSoftDeleteRule? ResolveSoftDeleteRule(CrudEntityRegistration registration)
+        {
+            if (registration.Policy is not ISoftDeletePolicy softDeletePolicy)
+            {
+                return null;
+            }
+
+            return softDeletePolicy.ResolveSoftDelete(CrudAction.Delete);
+        }
+
+        public static IQueryable ApplySoftDeleteFilter(IQueryable queryable, Type entityType, CrudSoftDeleteRule rule)
+        {
+            var parameter = Expression.Parameter(entityType, "entity");
+            var property = Expression.Property(parameter, rule.FlagProperty);
+            var condition = Expression.Equal(property, Expression.Constant(false));
+            var lambda = Expression.Lambda(condition, parameter);
+            var whereExpression = Expression.Call(
+                QueryableWhereMethod.MakeGenericMethod(entityType),
+                queryable.Expression,
+                lambda);
+            return queryable.Provider.CreateQuery(whereExpression);
+        }
+
+        public static bool IsSoftDeleted(object entity, CrudSoftDeleteRule rule)
+        {
+            var value = rule.FlagProperty.GetValue(entity);
+            if (value is bool flag)
+            {
+                return flag;
+            }
+
+            return false;
+        }
+
+        public static void ApplySoftDelete(object entity, CrudSoftDeleteRule rule)
+        {
+            rule.FlagProperty.SetValue(entity, true);
+            if (rule.TimestampProperty == null)
+            {
+                return;
+            }
+
+            var now = rule.UseUtc ? DateTime.UtcNow : DateTime.Now;
+            if (rule.TimestampProperty.PropertyType == typeof(DateTime))
+            {
+                rule.TimestampProperty.SetValue(entity, now);
+                return;
+            }
+
+            rule.TimestampProperty.SetValue(entity, (DateTime?)now);
         }
 
         private static ValidationResult InvokeValidator(Type entityType, IValidator validator, object instance)
