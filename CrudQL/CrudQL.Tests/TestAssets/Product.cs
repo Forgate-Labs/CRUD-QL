@@ -1,3 +1,5 @@
+using System;
+
 namespace CrudQL.Tests.TestAssets;
 
 public class Product
@@ -15,4 +17,8 @@ public class Product
     public int? CategoryId { get; set; }
 
     public Category? Category { get; set; }
+
+    public bool Deleted { get; set; }
+
+    public DateTime? DeletedAt { get; set; }
 }
