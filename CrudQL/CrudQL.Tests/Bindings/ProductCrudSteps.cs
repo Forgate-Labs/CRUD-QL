@@ -111,19 +111,19 @@ public sealed class ProductCrudSteps : IDisposable
         productPolicy = ProjectionRestrictedProductPolicy.ForSupport(null, restrictCreate: false);
     }
 
-    [Given(@"^the Product policy uses soft delete flag (.+) for role (.+)$")]
+    [Given(@"^the Product policy uses soft delete flag ([^ ]+) for role (.+)$")]
     public void GivenTheProductPolicyUsesSoftDeleteFlagForRole(string flagField, string role)
     {
         productPolicy = SoftDeleteProductPolicy.ForFlagOnly(flagField, role);
     }
 
-    [Given(@"^the Product policy uses soft delete flag (.+) and timestamp (.+) using UTC for role (.+)$")]
+    [Given(@"^the Product policy uses soft delete flag ([^ ]+) and timestamp ([^ ]+) using UTC for role (.+)$")]
     public void GivenTheProductPolicyUsesSoftDeleteFlagAndTimestampUsingUtcForRole(string flagField, string timestampField, string role)
     {
         productPolicy = SoftDeleteProductPolicy.ForTimestamp(flagField, timestampField, useUtc: true, role);
     }
 
-    [Given(@"^the Product policy uses soft delete flag (.+) and timestamp (.+) using local time for role (.+)$")]
+    [Given(@"^the Product policy uses soft delete flag ([^ ]+) and timestamp ([^ ]+) using local time for role (.+)$")]
     public void GivenTheProductPolicyUsesSoftDeleteFlagAndTimestampUsingLocalTimeForRole(string flagField, string timestampField, string role)
     {
         productPolicy = SoftDeleteProductPolicy.ForTimestamp(flagField, timestampField, useUtc: false, role);
