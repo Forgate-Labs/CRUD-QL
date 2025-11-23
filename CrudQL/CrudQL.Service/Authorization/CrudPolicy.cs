@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace CrudQL.Service.Authorization;
 
-public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectionPolicy
+public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectionPolicy, ISoftDeletePolicy
 {
     private static readonly JsonNamingPolicy NamingPolicy = JsonNamingPolicy.CamelCase;
     private readonly Dictionary<CrudAction, ActionRule> rules = new();
@@ -77,6 +77,16 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return new CrudProjectionRule(restricted.Fields!.ToArray(), suppressionValue);
     }
 
+    CrudSoftDeleteRule? ISoftDeletePolicy.ResolveSoftDelete(CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            return null;
+        }
+
+        return rule.SoftDeleteRule;
+    }
+
     private string ResolveFieldName(Expression<Func<TEntity, object>> selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
@@ -96,11 +106,56 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return NamingPolicy.ConvertName(property.Name);
     }
 
+    private PropertyInfo ResolveFlagProperty(Expression<Func<TEntity, bool>> selector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+
+        var property = ResolveProperty(selector, nameof(selector));
+        if (property.PropertyType != typeof(bool))
+        {
+            throw new ArgumentException("Soft delete flag must target a boolean property.", nameof(selector));
+        }
+
+        return property;
+    }
+
+    private PropertyInfo ResolveTimestampProperty(Expression<Func<TEntity, DateTime?>> selector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+
+        var property = ResolveProperty(selector, nameof(selector));
+        if (property.PropertyType != typeof(DateTime) && property.PropertyType != typeof(DateTime?))
+        {
+            throw new ArgumentException("Soft delete timestamp must target a DateTime property.", nameof(selector));
+        }
+
+        return property;
+    }
+
+    private PropertyInfo ResolveProperty<TProperty>(Expression<Func<TEntity, TProperty>> selector, string parameterName)
+    {
+        var member = selector.Body switch
+        {
+            MemberExpression expression => expression,
+            UnaryExpression { Operand: MemberExpression inner } => inner,
+            _ => null
+        };
+
+        if (member == null || member.Member is not PropertyInfo property || !property.CanRead || !property.CanWrite)
+        {
+            throw new ArgumentException("Soft delete selectors must target readable and writable properties.", parameterName);
+        }
+
+        return property;
+    }
+
     internal sealed class ActionRule
     {
         public HashSet<string> AllRoles { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public List<RoleAssignment> Assignments { get; } = new();
+
+        public CrudSoftDeleteRule? SoftDeleteRule { get; set; }
     }
 
     internal sealed class RoleAssignment
@@ -181,6 +236,29 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
             var fields = selectors.Select(policy.ResolveFieldName);
             currentAssignment.AssignFields(fields);
             currentAssignment = null;
+            return this;
+        }
+
+        public CrudActionConfigurator DeleteWithColumn(Expression<Func<TEntity, bool>> flagSelector, Expression<Func<TEntity, DateTime?>>? timestampSelector = null, bool useUtc = true)
+        {
+            if (action != CrudAction.Delete)
+            {
+                throw new InvalidOperationException("Soft delete configuration is only supported for delete actions.");
+            }
+
+            if (rule.SoftDeleteRule != null)
+            {
+                throw new InvalidOperationException("Soft delete has already been configured for this action.");
+            }
+
+            var flagProperty = policy.ResolveFlagProperty(flagSelector);
+            PropertyInfo? timestampProperty = null;
+            if (timestampSelector != null)
+            {
+                timestampProperty = policy.ResolveTimestampProperty(timestampSelector);
+            }
+
+            rule.SoftDeleteRule = new CrudSoftDeleteRule(flagProperty, timestampProperty, useUtc);
             return this;
         }
 
