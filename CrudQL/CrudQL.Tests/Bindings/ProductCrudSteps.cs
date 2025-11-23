@@ -111,6 +111,24 @@ public sealed class ProductCrudSteps : IDisposable
         productPolicy = ProjectionRestrictedProductPolicy.ForSupport(null, restrictCreate: false);
     }
 
+    [Given("the Product policy uses soft delete flag (.+) for role (.+)")]
+    public void GivenTheProductPolicyUsesSoftDeleteFlagForRole(string flagField, string role)
+    {
+        productPolicy = SoftDeleteProductPolicy.ForFlagOnly(flagField, role);
+    }
+
+    [Given(@"the Product policy uses soft delete flag (.+) and timestamp (.+) using UTC for role (.+)")]
+    public void GivenTheProductPolicyUsesSoftDeleteFlagAndTimestampUsingUtcForRole(string flagField, string timestampField, string role)
+    {
+        productPolicy = SoftDeleteProductPolicy.ForTimestamp(flagField, timestampField, useUtc: true, role);
+    }
+
+    [Given(@"the Product policy uses soft delete flag (.+) and timestamp (.+) using local time for role (.+)")]
+    public void GivenTheProductPolicyUsesSoftDeleteFlagAndTimestampUsingLocalTimeForRole(string flagField, string timestampField, string role)
+    {
+        productPolicy = SoftDeleteProductPolicy.ForTimestamp(flagField, timestampField, useUtc: false, role);
+    }
+
     [Given("the authenticated user has roles (.+)")]
     [When("the authenticated user has roles (.+)")]
     [Then("the authenticated user has roles (.+)")]
@@ -403,6 +421,15 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(actual, Is.EquivalentTo(expected));
     }
 
+    [Then(@"the last response message is ""(.+)""")]
+    public void ThenTheLastResponseMessageIs(string message)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null, "No response payload was captured.");
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        Assert.That(document.RootElement.TryGetProperty("message", out var messageElement), Is.True, "Response did not include 'message'.");
+        Assert.That(messageElement.GetString(), Is.EqualTo(message));
+    }
+
     [Then(@"the last response masks the following Product fields with ""(.+)""")]
     public void ThenTheLastResponseMasksTheFollowingProductFieldsWith(string mask, Table table)
     {
@@ -495,6 +522,7 @@ public sealed class ProductCrudSteps : IDisposable
             Assert.That(products.TryGetValue(name, out var tracked), Is.True);
             var response = await currentClient.DeleteAsync($"/crud?entity=Product&id={tracked!.Id}");
             lastStatusCode = response.StatusCode;
+            lastResponseBody = await response.Content.ReadAsStringAsync();
             Assert.That(response.StatusCode, Is.EqualTo(expected));
         }
     }
@@ -567,6 +595,50 @@ public sealed class ProductCrudSteps : IDisposable
         }
     }
 
+    [Then("the EF Core store marks the following products as deleted")]
+    public void ThenTheEfCoreStoreMarksTheFollowingProductsAsDeleted(Table table)
+    {
+        using var scope = server!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<FakeDbContext>();
+        foreach (var row in table.Rows)
+        {
+            var name = row["Name"];
+            var record = dbContext.Products.AsNoTracking().SingleOrDefault(product => string.Equals(product.Name, name, StringComparison.OrdinalIgnoreCase));
+            Assert.That(record, Is.Not.Null, $"Product '{name}' was not found in the EF Core store.");
+            Assert.That(record!.Deleted, Is.True, $"Product '{name}' was not marked as deleted.");
+        }
+    }
+
+    [Then("the EF Core store sets DeletedAt in UTC for the following products")]
+    public void ThenTheEfCoreStoreSetsDeletedAtInUtcForTheFollowingProducts(Table table)
+    {
+        using var scope = server!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<FakeDbContext>();
+        foreach (var row in table.Rows)
+        {
+            var name = row["Name"];
+            var record = dbContext.Products.AsNoTracking().SingleOrDefault(product => string.Equals(product.Name, name, StringComparison.OrdinalIgnoreCase));
+            Assert.That(record, Is.Not.Null, $"Product '{name}' was not found in the EF Core store.");
+            Assert.That(record!.DeletedAt, Is.Not.Null, $"Product '{name}' does not have DeletedAt set.");
+            Assert.That(record.DeletedAt!.Value.Kind, Is.EqualTo(DateTimeKind.Utc), $"Product '{name}' DeletedAt is not UTC.");
+        }
+    }
+
+    [Then("the EF Core store sets DeletedAt in local time for the following products")]
+    public void ThenTheEfCoreStoreSetsDeletedAtInLocalTimeForTheFollowingProducts(Table table)
+    {
+        using var scope = server!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<FakeDbContext>();
+        foreach (var row in table.Rows)
+        {
+            var name = row["Name"];
+            var record = dbContext.Products.AsNoTracking().SingleOrDefault(product => string.Equals(product.Name, name, StringComparison.OrdinalIgnoreCase));
+            Assert.That(record, Is.Not.Null, $"Product '{name}' was not found in the EF Core store.");
+            Assert.That(record!.DeletedAt, Is.Not.Null, $"Product '{name}' does not have DeletedAt set.");
+            Assert.That(record.DeletedAt!.Value.Kind, Is.EqualTo(DateTimeKind.Local), $"Product '{name}' DeletedAt is not local time.");
+        }
+    }
+
     [When(@"I delete the following products through DELETE \/crud")]
     public async Task WhenIDeleteTheFollowingProductsThroughDeleteCrud(Table table)
     {
@@ -578,7 +650,6 @@ public sealed class ProductCrudSteps : IDisposable
             var response = await currentClient.DeleteAsync($"/crud?entity=Product&id={tracked!.Id}");
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
             deleted.Add(name);
-            products.Remove(name);
         }
     }
 
@@ -851,6 +922,56 @@ public sealed class ProductCrudSteps : IDisposable
             }
 
             Allow(CrudAction.Create).ForRoles("Admin");
+        }
+    }
+
+    private sealed class SoftDeleteProductPolicy : CrudPolicy<Product>
+    {
+        private SoftDeleteProductPolicy(string role, Expression<Func<Product, bool>> flagSelector, Expression<Func<Product, DateTime?>>? timestampSelector, bool? useUtc)
+        {
+            Allow(CrudAction.Create).ForRoles(role);
+            Allow(CrudAction.Read).ForRoles(role);
+            if (timestampSelector == null)
+            {
+                Allow(CrudAction.Delete).ForRoles(role).DeleteWithColumn(flagSelector);
+                return;
+            }
+
+            var utc = useUtc ?? true;
+            Allow(CrudAction.Delete).ForRoles(role).DeleteWithColumn(flagSelector, timestampSelector, utc);
+        }
+
+        public static SoftDeleteProductPolicy ForFlagOnly(string flagField, string role)
+        {
+            var flagSelector = ResolveFlagSelector(flagField);
+            return new SoftDeleteProductPolicy(role, flagSelector, null, null);
+        }
+
+        public static SoftDeleteProductPolicy ForTimestamp(string flagField, string timestampField, bool useUtc, string role)
+        {
+            var flagSelector = ResolveFlagSelector(flagField);
+            var timestampSelector = ResolveTimestampSelector(timestampField);
+            return new SoftDeleteProductPolicy(role, flagSelector, timestampSelector, useUtc);
+        }
+
+        private static Expression<Func<Product, bool>> ResolveFlagSelector(string field)
+        {
+            if (string.Equals(field, nameof(Product.Deleted), StringComparison.OrdinalIgnoreCase))
+            {
+                return product => product.Deleted;
+            }
+
+            throw new ArgumentException($"Unknown soft delete flag '{field}'.", nameof(field));
+        }
+
+        private static Expression<Func<Product, DateTime?>> ResolveTimestampSelector(string field)
+        {
+            if (string.Equals(field, nameof(Product.DeletedAt), StringComparison.OrdinalIgnoreCase))
+            {
+                return product => product.DeletedAt;
+            }
+
+            throw new ArgumentException($"Unknown soft delete timestamp '{field}'.", nameof(field));
         }
     }
 
