@@ -36,11 +36,33 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return new CrudActionConfigurator(this, action, rule);
     }
 
+    protected CrudPolicy<TEntity> AllowAnonymous(CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            rule = new ActionRule();
+            rules[action] = rule;
+        }
+
+        rule.IsAnonymous = true;
+        return this;
+    }
+
     bool ICrudPolicy.IsAuthorized(ClaimsPrincipal user, CrudAction action)
     {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            return false;
+        }
+
+        if (rule.IsAnonymous)
+        {
+            return true;
+        }
+
         ArgumentNullException.ThrowIfNull(user);
 
-        if (!rules.TryGetValue(action, out var rule) || rule.AllRoles.Count == 0)
+        if (rule.AllRoles.Count == 0)
         {
             return false;
         }
@@ -156,6 +178,8 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         public List<RoleAssignment> Assignments { get; } = new();
 
         public CrudSoftDeleteRule? SoftDeleteRule { get; set; }
+
+        public bool IsAnonymous { get; set; }
     }
 
     internal sealed class RoleAssignment
