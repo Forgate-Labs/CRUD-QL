@@ -53,6 +53,37 @@ public sealed class ProductCrudSteps : IDisposable
         productPolicy = new RoleRestrictedProductPolicy(parsed);
     }
 
+    [Given("the Product policy allows anonymous access for (.+) action")]
+    public void GivenTheProductPolicyAllowsAnonymousAccessForAction(string action)
+    {
+        var crudAction = Enum.Parse<CrudAction>(action, ignoreCase: true);
+        productPolicy = productPolicy == null
+            ? new AnonymousProductPolicy(crudAction)
+            : ((AnonymousProductPolicy)productPolicy).WithAnonymous(crudAction);
+    }
+
+    [Given("the Product policy allows only (.+) for (.+) action")]
+    public void GivenTheProductPolicyAllowsOnlyRoleForAction(string role, string action)
+    {
+        var crudAction = Enum.Parse<CrudAction>(action, ignoreCase: true);
+        var roles = ParseRoles(role);
+        if (productPolicy is AnonymousProductPolicy anonymousPolicy)
+        {
+            productPolicy = anonymousPolicy.WithRoles(crudAction, roles);
+        }
+        else
+        {
+            productPolicy = new AnonymousProductPolicy().WithRoles(crudAction, roles);
+        }
+    }
+
+    [Given("the user is not authenticated")]
+    [When("the user is not authenticated")]
+    public void GivenTheUserIsNotAuthenticated()
+    {
+        currentUser = new ClaimsPrincipal(new ClaimsIdentity());
+    }
+
     [Given("the Product create validator requires name and positive price")]
     public void GivenTheProductCreateValidatorRequiresNameAndPositivePrice()
     {
@@ -989,6 +1020,54 @@ public sealed class ProductCrudSteps : IDisposable
             {
                 Allow(action).ForRoles(roleArray);
             }
+        }
+    }
+
+    private sealed class AnonymousProductPolicy : CrudPolicy<Product>
+    {
+        private readonly HashSet<CrudAction> anonymousActions = new();
+        private readonly Dictionary<CrudAction, string[]> roleActions = new();
+
+        public AnonymousProductPolicy()
+        {
+            foreach (var action in Enum.GetValues<CrudAction>())
+            {
+                Allow(action).ForRoles("Admin");
+            }
+        }
+
+        public AnonymousProductPolicy(CrudAction action)
+        {
+            anonymousActions.Add(action);
+            foreach (var a in Enum.GetValues<CrudAction>())
+            {
+                if (a == action)
+                {
+                    AllowAnonymous(a);
+                }
+                else
+                {
+                    Allow(a).ForRoles("Admin");
+                }
+            }
+        }
+
+        public AnonymousProductPolicy WithAnonymous(CrudAction action)
+        {
+            if (!anonymousActions.Contains(action))
+            {
+                anonymousActions.Add(action);
+                AllowAnonymous(action);
+            }
+
+            return this;
+        }
+
+        public AnonymousProductPolicy WithRoles(CrudAction action, string[] roles)
+        {
+            roleActions[action] = roles;
+            Allow(action).ForRoles(roles);
+            return this;
         }
     }
 
