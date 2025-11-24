@@ -71,6 +71,8 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
     {
         ArgumentNullException.ThrowIfNull(entityType);
 
+        policy?.ValidateConfiguration();
+
         lock (gate)
         {
             if (registrations.TryGetValue(entityType, out var existing))

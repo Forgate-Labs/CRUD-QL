@@ -141,6 +141,18 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return rule.AllRoles.Any(user.IsInRole);
     }
 
+    void ICrudPolicy.ValidateConfiguration()
+    {
+        var requiredActions = new[] { CrudAction.Create, CrudAction.Read, CrudAction.Update, CrudAction.Delete };
+        var missingActions = requiredActions.Where(action => !rules.ContainsKey(action)).ToList();
+
+        if (missingActions.Count > 0)
+        {
+            var missing = string.Join(", ", missingActions);
+            throw new InvalidOperationException($"Policy for {typeof(TEntity).Name} must configure all CRUD actions. Missing: {missing}. Use Allow* or AllowAnonymous* methods for each action.");
+        }
+    }
+
     CrudProjectionRule? ICrudProjectionPolicy.ResolveProjection(ClaimsPrincipal user, CrudAction action)
     {
         ArgumentNullException.ThrowIfNull(user);
