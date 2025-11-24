@@ -385,6 +385,22 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
             return this;
         }
 
+        public CrudActionConfigurator ForAllFields()
+        {
+            if (currentAssignment == null)
+            {
+                throw new InvalidOperationException("ForAllFields must be chained after ForRoles.");
+            }
+
+            if (action is not CrudAction.Read and not CrudAction.Create)
+            {
+                throw new InvalidOperationException("Field projections are only supported for read and create actions.");
+            }
+
+            currentAssignment = null;
+            return this;
+        }
+
         public CrudActionConfigurator DeleteWithColumn(Expression<Func<TEntity, bool>> flagSelector, Expression<Func<TEntity, DateTime?>>? timestampSelector = null, bool useUtc = true)
         {
             if (action != CrudAction.Delete)
