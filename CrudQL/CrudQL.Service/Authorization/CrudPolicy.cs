@@ -90,6 +90,39 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return AllowAnonymousAction(CrudAction.Delete);
     }
 
+    protected CrudPolicy<TEntity> BlockRead()
+    {
+        return BlockAction(CrudAction.Read);
+    }
+
+    protected CrudPolicy<TEntity> BlockCreate()
+    {
+        return BlockAction(CrudAction.Create);
+    }
+
+    protected CrudPolicy<TEntity> BlockUpdate()
+    {
+        return BlockAction(CrudAction.Update);
+    }
+
+    protected CrudPolicy<TEntity> BlockDelete()
+    {
+        return BlockAction(CrudAction.Delete);
+    }
+
+    private CrudPolicy<TEntity> BlockAction(CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            rule = new ActionRule();
+            rules[action] = rule;
+        }
+
+        rule.IsAnonymous = false;
+        rule.AllRoles.Clear();
+        return this;
+    }
+
     private CrudActionConfigurator AllowActionForRoles(CrudAction action, string[] roles)
     {
         if (roles == null || roles.Length == 0)
