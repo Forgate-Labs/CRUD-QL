@@ -947,6 +947,8 @@ public sealed class ProductCrudSteps : IDisposable
             }
 
             Allow(CrudAction.Create).ForRoles("Admin");
+            BlockUpdate();
+            BlockDelete();
         }
     }
 
@@ -956,6 +958,7 @@ public sealed class ProductCrudSteps : IDisposable
         {
             Allow(CrudAction.Create).ForRoles(role);
             Allow(CrudAction.Read).ForRoles(role);
+            Allow(CrudAction.Update).ForRoles(role);
             if (timestampSelector == null)
             {
                 Allow(CrudAction.Delete).ForRoles(role).DeleteWithColumn(flagSelector);

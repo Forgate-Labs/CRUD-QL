@@ -7,6 +7,8 @@ namespace CrudQL.Service.Authorization;
 public interface ICrudPolicy
 {
     bool IsAuthorized(ClaimsPrincipal user, CrudAction action);
+
+    void ValidateConfiguration();
 }
 
 public interface ICrudPolicy<in TEntity> : ICrudPolicy
