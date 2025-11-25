@@ -70,14 +70,14 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return AllowActionForRoles(CrudAction.Delete, roles);
     }
 
-    protected CrudPolicy<TEntity> AllowAnonymousRead()
+    protected CrudActionConfigurator AllowAnonymousRead()
     {
-        return AllowAnonymousAction(CrudAction.Read);
+        return AllowAnonymousActionWithConfigurator(CrudAction.Read);
     }
 
-    protected CrudPolicy<TEntity> AllowAnonymousCreate()
+    protected CrudActionConfigurator AllowAnonymousCreate()
     {
-        return AllowAnonymousAction(CrudAction.Create);
+        return AllowAnonymousActionWithConfigurator(CrudAction.Create);
     }
 
     protected CrudPolicy<TEntity> AllowAnonymousUpdate()
@@ -152,6 +152,18 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return this;
     }
 
+    private CrudActionConfigurator AllowAnonymousActionWithConfigurator(CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            rule = new ActionRule();
+            rules[action] = rule;
+        }
+
+        rule.IsAnonymous = true;
+        return new CrudActionConfigurator(this, action, rule);
+    }
+
     bool ICrudPolicy.IsAuthorized(ClaimsPrincipal user, CrudAction action)
     {
         if (!rules.TryGetValue(action, out var rule))
@@ -183,6 +195,17 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         {
             var missing = string.Join(", ", missingActions);
             throw new InvalidOperationException($"Policy for {typeof(TEntity).Name} must configure all CRUD actions. Missing: {missing}. Use Allow* or AllowAnonymous* methods for each action.");
+        }
+
+        var actionsRequiringFieldConfiguration = new[] { CrudAction.Read, CrudAction.Create };
+        var missingFieldConfiguration = actionsRequiringFieldConfiguration
+            .Where(action => rules.TryGetValue(action, out var rule) && !rule.HasFieldConfiguration)
+            .ToList();
+
+        if (missingFieldConfiguration.Count > 0)
+        {
+            var missing = string.Join(", ", missingFieldConfiguration);
+            throw new InvalidOperationException($"Policy for {typeof(TEntity).Name} must configure field access for {missing} actions. Use .ForFields() or .ForAllFields() after Allow* methods.");
         }
     }
 
@@ -296,6 +319,8 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         public CrudSoftDeleteRule? SoftDeleteRule { get; set; }
 
         public bool IsAnonymous { get; set; }
+
+        public bool HasFieldConfiguration { get; set; }
     }
 
     internal sealed class RoleAssignment
@@ -364,11 +389,6 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
 
         public CrudActionConfigurator ForFields(params Expression<Func<TEntity, object>>[] selectors)
         {
-            if (currentAssignment == null)
-            {
-                throw new InvalidOperationException("ForFields must be chained after ForRoles.");
-            }
-
             if (selectors == null || selectors.Length == 0)
             {
                 throw new ArgumentException("At least one field must be provided.", nameof(selectors));
@@ -379,24 +399,35 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
                 throw new InvalidOperationException("Field projections are only supported for read and create actions.");
             }
 
-            var fields = selectors.Select(policy.ResolveFieldName);
-            currentAssignment.AssignFields(fields);
-            currentAssignment = null;
+            if (currentAssignment == null && !rule.IsAnonymous)
+            {
+                throw new InvalidOperationException("ForFields must be chained after ForRoles.");
+            }
+
+            if (currentAssignment != null)
+            {
+                var fields = selectors.Select(policy.ResolveFieldName);
+                currentAssignment.AssignFields(fields);
+                currentAssignment = null;
+            }
+
+            rule.HasFieldConfiguration = true;
             return this;
         }
 
         public CrudActionConfigurator ForAllFields()
         {
-            if (currentAssignment == null)
-            {
-                throw new InvalidOperationException("ForAllFields must be chained after ForRoles.");
-            }
-
             if (action is not CrudAction.Read and not CrudAction.Create)
             {
                 throw new InvalidOperationException("Field projections are only supported for read and create actions.");
             }
 
+            if (currentAssignment == null && !rule.IsAnonymous)
+            {
+                throw new InvalidOperationException("ForAllFields must be chained after ForRoles.");
+            }
+
+            rule.HasFieldConfiguration = true;
             currentAssignment = null;
             return this;
         }
