@@ -191,6 +191,10 @@ public sealed class ProductCrudSteps : IDisposable
                     {
                         if (productPolicy != null)
                         {
+                            if (productPolicy is AnonymousProductPolicy anonPolicy)
+                            {
+                                anonPolicy.EnsureConfigured();
+                            }
                             cfg.UsePolicy(productPolicy);
                         }
 
@@ -934,19 +938,19 @@ public sealed class ProductCrudSteps : IDisposable
         private void Configure(bool restrictCreate)
         {
             var restrictedFields = new Expression<Func<Product, object>>[] { product => product.Id, product => product.Name };
-            Allow(CrudAction.Read).ForRoles("Support").ForFields(restrictedFields);
-            Allow(CrudAction.Read).ForRoles("Admin");
+            AllowRead("Support").ForFields(restrictedFields);
+            AllowRead("Admin").ForAllFields();
 
             if (restrictCreate)
             {
-                Allow(CrudAction.Create).ForRoles("Support").ForFields(restrictedFields);
+                AllowCreate("Support").ForFields(restrictedFields);
             }
             else
             {
-                Allow(CrudAction.Create).ForRoles("Support");
+                AllowCreate("Support").ForAllFields();
             }
 
-            Allow(CrudAction.Create).ForRoles("Admin");
+            AllowCreate("Admin").ForAllFields();
             BlockUpdate();
             BlockDelete();
         }
@@ -956,17 +960,17 @@ public sealed class ProductCrudSteps : IDisposable
     {
         private SoftDeleteProductPolicy(string role, Expression<Func<Product, bool>> flagSelector, Expression<Func<Product, DateTime?>>? timestampSelector, bool? useUtc)
         {
-            Allow(CrudAction.Create).ForRoles(role);
-            Allow(CrudAction.Read).ForRoles(role);
-            Allow(CrudAction.Update).ForRoles(role);
+            AllowCreate(role).ForAllFields();
+            AllowRead(role).ForAllFields();
+            AllowUpdate(role);
             if (timestampSelector == null)
             {
-                Allow(CrudAction.Delete).ForRoles(role).DeleteWithColumn(flagSelector);
+                AllowDelete(role).DeleteWithColumn(flagSelector);
                 return;
             }
 
             var utc = useUtc ?? true;
-            Allow(CrudAction.Delete).ForRoles(role).DeleteWithColumn(flagSelector, timestampSelector, utc);
+            AllowDelete(role).DeleteWithColumn(flagSelector, timestampSelector, utc);
         }
 
         public static SoftDeleteProductPolicy ForFlagOnly(string flagField, string role)
@@ -1013,10 +1017,10 @@ public sealed class ProductCrudSteps : IDisposable
             }
 
             var roleArray = roles.ToArray();
-            foreach (var action in Enum.GetValues<CrudAction>())
-            {
-                Allow(action).ForRoles(roleArray);
-            }
+            AllowRead(roleArray).ForAllFields();
+            AllowCreate(roleArray).ForAllFields();
+            AllowUpdate(roleArray);
+            AllowDelete(roleArray);
         }
     }
 
@@ -1024,29 +1028,20 @@ public sealed class ProductCrudSteps : IDisposable
     {
         private readonly HashSet<CrudAction> anonymousActions = new();
         private readonly Dictionary<CrudAction, string[]> roleActions = new();
+        private bool configured;
 
         public AnonymousProductPolicy()
         {
-            foreach (var action in Enum.GetValues<CrudAction>())
-            {
-                Allow(action).ForRoles("Admin");
-            }
+            AllowRead("Admin").ForAllFields();
+            AllowCreate("Admin").ForAllFields();
+            AllowUpdate("Admin");
+            AllowDelete("Admin");
+            configured = true;
         }
 
         public AnonymousProductPolicy(CrudAction action)
         {
             anonymousActions.Add(action);
-            foreach (var a in Enum.GetValues<CrudAction>())
-            {
-                if (a == action)
-                {
-                    AllowAnonymous(a);
-                }
-                else
-                {
-                    Allow(a).ForRoles("Admin");
-                }
-            }
         }
 
         public AnonymousProductPolicy WithAnonymous(CrudAction action)
@@ -1054,7 +1049,6 @@ public sealed class ProductCrudSteps : IDisposable
             if (!anonymousActions.Contains(action))
             {
                 anonymousActions.Add(action);
-                AllowAnonymous(action);
             }
 
             return this;
@@ -1063,8 +1057,66 @@ public sealed class ProductCrudSteps : IDisposable
         public AnonymousProductPolicy WithRoles(CrudAction action, string[] roles)
         {
             roleActions[action] = roles;
-            Allow(action).ForRoles(roles);
             return this;
+        }
+
+        public void EnsureConfigured()
+        {
+            if (configured) return;
+
+            if (anonymousActions.Contains(CrudAction.Read))
+            {
+                AllowAnonymousRead().ForAllFields();
+            }
+            else if (roleActions.ContainsKey(CrudAction.Read))
+            {
+                AllowRead(roleActions[CrudAction.Read]).ForAllFields();
+            }
+            else
+            {
+                AllowRead("Admin").ForAllFields();
+            }
+
+            if (anonymousActions.Contains(CrudAction.Create))
+            {
+                AllowAnonymousCreate().ForAllFields();
+            }
+            else if (roleActions.ContainsKey(CrudAction.Create))
+            {
+                AllowCreate(roleActions[CrudAction.Create]).ForAllFields();
+            }
+            else
+            {
+                AllowCreate("Admin").ForAllFields();
+            }
+
+            if (anonymousActions.Contains(CrudAction.Update))
+            {
+                AllowAnonymousUpdate();
+            }
+            else if (roleActions.ContainsKey(CrudAction.Update))
+            {
+                AllowUpdate(roleActions[CrudAction.Update]);
+            }
+            else
+            {
+                AllowUpdate("Admin");
+            }
+
+            if (anonymousActions.Contains(CrudAction.Delete))
+            {
+                AllowAnonymousDelete();
+            }
+            else if (roleActions.ContainsKey(CrudAction.Delete))
+            {
+                AllowDelete(roleActions[CrudAction.Delete]);
+            }
+            else
+            {
+                AllowDelete("Admin");
+            }
+
+            configured = true;
         }
     }
 
