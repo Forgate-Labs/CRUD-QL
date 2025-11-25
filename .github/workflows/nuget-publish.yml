@@ -45,42 +45,6 @@ jobs:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: dotnet nuget push out/*.nupkg --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
 
-      - name: Generate release notes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version="${PACKAGE_VERSION:-${{ steps.package_version.outputs.version }}}"
-          repo="${GITHUB_REPOSITORY}"
-          merge_commits=$(git log origin/main..HEAD --merges --pretty=format:'%H' || true)
-
-          {
-            echo "Automated release for version v$version."
-            echo
-            echo "## Pull Requests"
-          } > release-notes.md
-
-          if [ -z "$merge_commits" ]; then
-            echo "- No pull requests merged since main." >> release-notes.md
-          else
-            for sha in $merge_commits; do
-              pr_number=$(git show --no-notes --format=%B -s "$sha" | sed -n 's/^Merge pull request #\([0-9]\+\).*/\1/p' | head -n1)
-              if [ -z "$pr_number" ]; then
-                continue
-              fi
-
-              pr_data=$(gh api "repos/$repo/pulls/$pr_number" --jq '{number: .number, title: .title, body: .body}')
-              pr_title=$(echo "$pr_data" | jq -r '.title')
-              pr_body=$(echo "$pr_data" | jq -r '.body // ""')
-
-              echo "- PR #$pr_number: $pr_title" >> release-notes.md
-              if [ -n "$pr_body" ]; then
-                echo >> release-notes.md
-                printf '%s\n' "$pr_body" >> release-notes.md
-                echo >> release-notes.md
-              fi
-            done
-          fi
-
       - name: Tag release
         run: |
           version="${{ steps.package_version.outputs.version }}"
@@ -96,5 +60,5 @@ jobs:
         with:
           tag_name: v${{ steps.package_version.outputs.version }}
           name: v${{ steps.package_version.outputs.version }}
-          body_path: release-notes.md
+          body: Release v${{ steps.package_version.outputs.version }}
           files: out/*.nupkg

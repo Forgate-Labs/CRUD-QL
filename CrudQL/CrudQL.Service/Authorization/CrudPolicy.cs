@@ -25,6 +25,7 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return this;
     }
 
+    [Obsolete("Use AllowRead, AllowCreate, AllowUpdate, or AllowDelete instead.")]
     protected CrudActionConfigurator Allow(CrudAction action)
     {
         if (!rules.TryGetValue(action, out var rule))
@@ -36,7 +37,110 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return new CrudActionConfigurator(this, action, rule);
     }
 
+    [Obsolete("Use AllowAnonymousRead, AllowAnonymousCreate, AllowAnonymousUpdate, or AllowAnonymousDelete instead.")]
     protected CrudPolicy<TEntity> AllowAnonymous(CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            rule = new ActionRule();
+            rules[action] = rule;
+        }
+
+        rule.IsAnonymous = true;
+        return this;
+    }
+
+    protected CrudActionConfigurator AllowRead(params string[] roles)
+    {
+        return AllowActionForRoles(CrudAction.Read, roles);
+    }
+
+    protected CrudActionConfigurator AllowCreate(params string[] roles)
+    {
+        return AllowActionForRoles(CrudAction.Create, roles);
+    }
+
+    protected CrudActionConfigurator AllowUpdate(params string[] roles)
+    {
+        return AllowActionForRoles(CrudAction.Update, roles);
+    }
+
+    protected CrudActionConfigurator AllowDelete(params string[] roles)
+    {
+        return AllowActionForRoles(CrudAction.Delete, roles);
+    }
+
+    protected CrudPolicy<TEntity> AllowAnonymousRead()
+    {
+        return AllowAnonymousAction(CrudAction.Read);
+    }
+
+    protected CrudPolicy<TEntity> AllowAnonymousCreate()
+    {
+        return AllowAnonymousAction(CrudAction.Create);
+    }
+
+    protected CrudPolicy<TEntity> AllowAnonymousUpdate()
+    {
+        return AllowAnonymousAction(CrudAction.Update);
+    }
+
+    protected CrudPolicy<TEntity> AllowAnonymousDelete()
+    {
+        return AllowAnonymousAction(CrudAction.Delete);
+    }
+
+    protected CrudPolicy<TEntity> BlockRead()
+    {
+        return BlockAction(CrudAction.Read);
+    }
+
+    protected CrudPolicy<TEntity> BlockCreate()
+    {
+        return BlockAction(CrudAction.Create);
+    }
+
+    protected CrudPolicy<TEntity> BlockUpdate()
+    {
+        return BlockAction(CrudAction.Update);
+    }
+
+    protected CrudPolicy<TEntity> BlockDelete()
+    {
+        return BlockAction(CrudAction.Delete);
+    }
+
+    private CrudPolicy<TEntity> BlockAction(CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            rule = new ActionRule();
+            rules[action] = rule;
+        }
+
+        rule.IsAnonymous = false;
+        rule.AllRoles.Clear();
+        return this;
+    }
+
+    private CrudActionConfigurator AllowActionForRoles(CrudAction action, string[] roles)
+    {
+        if (roles == null || roles.Length == 0)
+        {
+            throw new ArgumentException("At least one role must be provided.", nameof(roles));
+        }
+
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            rule = new ActionRule();
+            rules[action] = rule;
+        }
+
+        var configurator = new CrudActionConfigurator(this, action, rule);
+        return configurator.ForRolesInternal(roles);
+    }
+
+    private CrudPolicy<TEntity> AllowAnonymousAction(CrudAction action)
     {
         if (!rules.TryGetValue(action, out var rule))
         {
@@ -68,6 +172,18 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         }
 
         return rule.AllRoles.Any(user.IsInRole);
+    }
+
+    void ICrudPolicy.ValidateConfiguration()
+    {
+        var requiredActions = new[] { CrudAction.Create, CrudAction.Read, CrudAction.Update, CrudAction.Delete };
+        var missingActions = requiredActions.Where(action => !rules.ContainsKey(action)).ToList();
+
+        if (missingActions.Count > 0)
+        {
+            var missing = string.Join(", ", missingActions);
+            throw new InvalidOperationException($"Policy for {typeof(TEntity).Name} must configure all CRUD actions. Missing: {missing}. Use Allow* or AllowAnonymous* methods for each action.");
+        }
     }
 
     CrudProjectionRule? ICrudProjectionPolicy.ResolveProjection(ClaimsPrincipal user, CrudAction action)
@@ -217,7 +333,13 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
             this.rule = rule;
         }
 
+        [Obsolete("Use AllowRead, AllowCreate, AllowUpdate, or AllowDelete with roles parameter instead.")]
         public CrudActionConfigurator ForRoles(params string[] values)
+        {
+            return ForRolesInternal(values);
+        }
+
+        internal CrudActionConfigurator ForRolesInternal(params string[] values)
         {
             if (values == null || values.Length == 0)
             {
@@ -259,6 +381,22 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
 
             var fields = selectors.Select(policy.ResolveFieldName);
             currentAssignment.AssignFields(fields);
+            currentAssignment = null;
+            return this;
+        }
+
+        public CrudActionConfigurator ForAllFields()
+        {
+            if (currentAssignment == null)
+            {
+                throw new InvalidOperationException("ForAllFields must be chained after ForRoles.");
+            }
+
+            if (action is not CrudAction.Read and not CrudAction.Create)
+            {
+                throw new InvalidOperationException("Field projections are only supported for read and create actions.");
+            }
+
             currentAssignment = null;
             return this;
         }
