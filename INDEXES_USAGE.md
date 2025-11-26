@@ -122,45 +122,70 @@ public class Startup
 }
 ```
 
-### 6. Aplicar Índices ao DbContext
+### 6. Aplicação Automática ao EF Core
 
-No seu `DbContext`, aplique os índices automaticamente:
+**✨ Os índices são aplicados AUTOMATICAMENTE!** Você não precisa fazer nada no seu `DbContext`.
+
+Quando você chama `AddCrudQl()`, um `IModelCustomizer` é registrado automaticamente que aplica todos os índices configurados ao modelo do EF Core.
 
 ```csharp
 public class AppDbContext : DbContext
 {
-    private readonly ICrudEntityRegistry _registry;
-
-    public AppDbContext(
-        DbContextOptions<AppDbContext> options,
-        ICrudEntityRegistry registry)
+    public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
     {
-        _registry = registry;
     }
 
     public DbSet<Product> Products { get; set; }
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        base.OnModelCreating(modelBuilder);
-
-        // Aplica todos os índices configurados via CRUD-QL
-        modelBuilder.ApplyCrudQlIndexes(_registry);
-    }
+    // ✅ Não precisa de OnModelCreating!
+    // Os índices são aplicados automaticamente pelo CrudQlModelCustomizer
 }
 ```
 
+**Opcional:** Se você já tem um `OnModelCreating`, pode chamar manualmente (mas não é necessário):
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    base.OnModelCreating(modelBuilder);
+
+    // Opcional: chamada manual (já é feito automaticamente)
+    // modelBuilder.ApplyCrudQlIndexes(_registry);
+}
+```
+
+## Como Funciona Internamente
+
+Quando você chama `services.AddCrudQl()`, acontece o seguinte:
+
+1. **Registra `ICrudEntityRegistry`** - Singleton que armazena configurações de todas as entidades
+2. **Registra `IModelCustomizer`** - Um `CrudQlModelCustomizer` que intercepta a criação do modelo do EF Core
+3. **Quando o DbContext é criado** - O `CrudQlModelCustomizer.Customize()` é chamado automaticamente
+4. **Aplica os índices** - Itera sobre todas as entidades registradas e aplica seus índices ao `ModelBuilder`
+
+```
+AddCrudQl()
+    ├─→ Registra ICrudEntityRegistry (singleton)
+    └─→ Registra IModelCustomizer (CrudQlModelCustomizer)
+
+Primeira vez que DbContext é usado:
+    EF Core chama IModelCustomizer.Customize()
+        └─→ CrudQlModelCustomizer aplica índices de todas as entidades
+```
+
+**Zero configuração manual necessária!** 🎉
+
 ## Vantagens desta Abordagem
+
+### ✅ Totalmente Automático
+Nenhuma configuração manual no DbContext. Apenas configure os índices em `AddEntity()` e está pronto!
 
 ### ✅ Documentação Centralizada
 Todos os índices estão documentados no mesmo lugar onde você configura a entidade no CRUD-QL.
 
 ### ✅ Type-Safe
 Usa expressions para referenciar propriedades, detectando erros em compile-time.
-
-### ✅ Aplicação Automática
-Os índices são automaticamente aplicados ao EF Core via `ApplyCrudQlIndexes()`.
 
 ### ✅ Validação de Ordenação (Futuro)
 Quando implementar ordenação, pode validar que apenas campos indexados são usados:
