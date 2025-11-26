@@ -13,6 +13,8 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Ordering;
+using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
 using FluentValidation;
 using FluentValidation.Results;
@@ -128,6 +130,7 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         JsonElement? filterElement = null;
+        LambdaExpression? filterPredicate = null;
         if (context.Request.Query.TryGetValue("filter", out var filterValues))
         {
             var filterString = filterValues.FirstOrDefault();
@@ -137,10 +140,16 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 {
                     using var document = JsonDocument.Parse(filterString);
                     filterElement = document.RootElement.Clone();
+
+                    if (!CrudEntityExecutor.TryBuildConditionPredicate(registration, filterElement.Value, out filterPredicate, out error))
+                    {
+                        await error!.ExecuteAsync(context);
+                        return;
+                    }
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
-                    await Results.BadRequest(new { message = "Invalid JSON in 'filter' query parameter" }).ExecuteAsync(context);
+                    await Results.BadRequest(new { message = "Invalid JSON in 'filter' query parameter", detail = ex.Message }).ExecuteAsync(context);
                     return;
                 }
             }
@@ -164,6 +173,17 @@ public static class CrudQlEndpointRouteBuilderExtensions
             queryable = CrudEntityExecutor.ApplySoftDeleteFilter(queryable, registration.ClrType, softDeleteRule);
         }
 
+        if (filterPredicate != null)
+        {
+            var queryableWhereMethod = typeof(Queryable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .First(method => method.Name == nameof(Queryable.Where) && method.GetParameters().Length == 2);
+            var whereExpression = Expression.Call(
+                queryableWhereMethod.MakeGenericMethod(registration.ClrType),
+                queryable.Expression,
+                filterPredicate);
+            queryable = queryable.Provider.CreateQuery(whereExpression);
+        }
+
         if (!TryResolveSelect(null, context.Request.Query, out var select, out error))
         {
             await error!.ExecuteAsync(context);
@@ -182,11 +202,98 @@ public static class CrudQlEndpointRouteBuilderExtensions
             queryable = CrudEntityExecutor.ApplyIncludes(queryable, registration.ClrType, includePaths);
         }
 
-        var cast = Queryable.Cast<object>(queryable);
-        var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
-        var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
-        var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
-        await Results.Json(new { data }, SerializerOptions).ExecuteAsync(context);
+        if (!TryParseOrderByRequest(context, registration, out var orderByRequest, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (orderByRequest != null)
+        {
+            queryable = ApplyOrderBy(queryable, registration.ClrType, orderByRequest);
+        }
+        else if (registration.OrderByConfig?.DefaultField != null)
+        {
+            var defaultOrderBy = new OrderByRequest(new[]
+            {
+                new OrderByField(registration.OrderByConfig.DefaultField, registration.OrderByConfig.DefaultDirection)
+            });
+            queryable = ApplyOrderBy(queryable, registration.ClrType, defaultOrderBy);
+        }
+
+        if (!TryParsePaginationRequest(context, registration, out var paginationRequest, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        PaginationResponse? paginationResponse = null;
+        if (paginationRequest != null)
+        {
+            var paginationConfig = registration.PaginationConfig ?? new PaginationConfig();
+            var pageSize = paginationRequest.PageSize;
+            var page = paginationRequest.Page;
+            var skip = (page - 1) * pageSize;
+
+            var cast = Queryable.Cast<object>(queryable);
+
+            int? totalRecords = null;
+            if (paginationRequest.IncludeCount)
+            {
+                totalRecords = await EntityFrameworkQueryableExtensions.CountAsync(cast, context.RequestAborted);
+            }
+
+            cast = Queryable.Skip(cast, skip);
+            cast = Queryable.Take(cast, pageSize);
+
+            var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
+            var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
+            var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
+
+            var hasNextPage = totalRecords.HasValue
+                ? skip + pageSize < totalRecords.Value
+                : data.Count == pageSize;
+            var hasPreviousPage = page > 1;
+            var totalPages = totalRecords.HasValue ? (int)Math.Ceiling((double)totalRecords.Value / pageSize) : (int?)null;
+
+            paginationResponse = new PaginationResponse(
+                page,
+                pageSize,
+                hasNextPage,
+                hasPreviousPage,
+                totalRecords,
+                totalPages);
+
+            object responsePayload;
+            if (totalRecords.HasValue)
+            {
+                responsePayload = new { data, pagination = paginationResponse };
+            }
+            else
+            {
+                responsePayload = new
+                {
+                    data,
+                    pagination = new
+                    {
+                        page = paginationResponse.Page,
+                        pageSize = paginationResponse.PageSize,
+                        hasNextPage = paginationResponse.HasNextPage,
+                        hasPreviousPage = paginationResponse.HasPreviousPage
+                    }
+                };
+            }
+
+            await Results.Json(responsePayload, SerializerOptions).ExecuteAsync(context);
+        }
+        else
+        {
+            var cast = Queryable.Cast<object>(queryable);
+            var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
+            var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
+            var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
+            await Results.Json(new { data }, SerializerOptions).ExecuteAsync(context);
+        }
     }
 
     private static async Task HandleUpdate(HttpContext context, [FromServices] ICrudEntityRegistry registry)
@@ -501,6 +608,182 @@ public static class CrudQlEndpointRouteBuilderExtensions
             : new CrudEntityExecutor.SelectNode(fields, CrudEntityExecutor.CreateEmptyIncludeMap());
         error = null;
         return true;
+    }
+
+    private static bool TryParsePaginationRequest(HttpContext context, CrudEntityRegistration registration, out PaginationRequest? paginationRequest, out IResult? error)
+    {
+        var query = context.Request.Query;
+        paginationRequest = null;
+        error = null;
+
+        var hasPage = query.TryGetValue("page", out var pageValues);
+        var hasPageSize = query.TryGetValue("pageSize", out var pageSizeValues);
+        var hasIncludeCount = query.TryGetValue("includeCount", out var includeCountValues);
+
+        if (!hasPage && !hasPageSize)
+        {
+            return true;
+        }
+
+        if (!hasPage)
+        {
+            error = Results.BadRequest(new { message = "When using pagination, 'page' parameter is required" });
+            return false;
+        }
+
+        if (!int.TryParse(pageValues.FirstOrDefault(), out var page) || page < 1)
+        {
+            error = Results.BadRequest(new { message = "Page must be greater than or equal to 1" });
+            return false;
+        }
+
+        var paginationConfig = registration.PaginationConfig ?? new PaginationConfig();
+        var pageSize = paginationConfig.DefaultPageSize;
+
+        if (hasPageSize)
+        {
+            if (!int.TryParse(pageSizeValues.FirstOrDefault(), out pageSize) || pageSize < 1)
+            {
+                error = Results.BadRequest(new { message = "PageSize must be greater than or equal to 1" });
+                return false;
+            }
+
+            if (pageSize > paginationConfig.MaxPageSize)
+            {
+                error = Results.BadRequest(new { message = $"PageSize cannot exceed {paginationConfig.MaxPageSize}" });
+                return false;
+            }
+        }
+
+        var includeCount = false;
+        if (hasIncludeCount)
+        {
+            if (bool.TryParse(includeCountValues.FirstOrDefault(), out var parsedIncludeCount))
+            {
+                includeCount = parsedIncludeCount;
+            }
+        }
+
+        paginationRequest = new PaginationRequest(page, pageSize, includeCount);
+        return true;
+    }
+
+    private static bool TryParseOrderByRequest(HttpContext context, CrudEntityRegistration registration, out OrderByRequest? orderByRequest, out IResult? error)
+    {
+        var query = context.Request.Query;
+        orderByRequest = null;
+        error = null;
+
+        if (!query.TryGetValue("orderBy", out var orderByValues))
+        {
+            return true;
+        }
+
+        var orderByString = orderByValues.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(orderByString))
+        {
+            return true;
+        }
+
+        var fields = new List<OrderByField>();
+        var parts = orderByString!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var part in parts)
+        {
+            var segments = part.Split(':', StringSplitOptions.TrimEntries);
+            if (segments.Length == 0 || string.IsNullOrWhiteSpace(segments[0]))
+            {
+                continue;
+            }
+
+            var fieldName = segments[0];
+            var direction = OrderDirection.Ascending;
+
+            if (segments.Length > 1)
+            {
+                var directionStr = segments[1].ToLowerInvariant();
+                if (directionStr == "desc" || directionStr == "descending")
+                {
+                    direction = OrderDirection.Descending;
+                }
+                else if (directionStr != "asc" && directionStr != "ascending")
+                {
+                    error = Results.BadRequest(new { message = $"Invalid order direction '{segments[1]}'. Use 'asc' or 'desc'" });
+                    return false;
+                }
+            }
+
+            if (registration.OrderByConfig?.AllowedFields != null)
+            {
+                var allowed = registration.OrderByConfig.AllowedFields.Any(f =>
+                    string.Equals(f, fieldName, StringComparison.OrdinalIgnoreCase));
+
+                if (!allowed)
+                {
+                    error = Results.BadRequest(new
+                    {
+                        message = $"Ordering by field '{fieldName}' is not allowed",
+                        allowedFields = registration.OrderByConfig.AllowedFields
+                    });
+                    return false;
+                }
+            }
+
+            fields.Add(new OrderByField(fieldName, direction));
+        }
+
+        if (fields.Count > 0)
+        {
+            orderByRequest = new OrderByRequest(fields);
+        }
+
+        return true;
+    }
+
+    private static IQueryable ApplyOrderBy(IQueryable queryable, Type entityType, OrderByRequest orderByRequest)
+    {
+        if (orderByRequest.Fields.Count == 0)
+        {
+            return queryable;
+        }
+
+        IOrderedQueryable? orderedQueryable = null;
+
+        foreach (var (field, index) in orderByRequest.Fields.Select((f, i) => (f, i)))
+        {
+            var parameter = Expression.Parameter(entityType, "x");
+            var property = entityType.GetProperty(field.FieldName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+
+            if (property == null)
+            {
+                continue;
+            }
+
+            var propertyAccess = Expression.MakeMemberAccess(parameter, property);
+            var lambda = Expression.Lambda(propertyAccess, parameter);
+
+            var methodName = index == 0
+                ? (field.Direction == OrderDirection.Ascending ? "OrderBy" : "OrderByDescending")
+                : (field.Direction == OrderDirection.Ascending ? "ThenBy" : "ThenByDescending");
+
+            var orderByMethod = typeof(Queryable)
+                .GetMethods()
+                .First(m => m.Name == methodName && m.GetParameters().Length == 2)
+                .MakeGenericMethod(entityType, property.PropertyType);
+
+            var resultQueryable = orderByMethod.Invoke(null, new object[] { orderedQueryable ?? queryable, lambda });
+
+            if (index == 0)
+            {
+                orderedQueryable = (IOrderedQueryable)resultQueryable!;
+            }
+            else
+            {
+                orderedQueryable = (IOrderedQueryable)resultQueryable!;
+            }
+        }
+
+        return orderedQueryable ?? queryable;
     }
 
     private static IReadOnlyCollection<string>? GetStringArray(JsonElement root, string propertyName)

@@ -3,7 +3,9 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Indexes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CrudQL.Service.Configuration;
@@ -17,6 +19,7 @@ public class CrudQlBuilder : ICrudQlBuilder
     {
         Services = services;
         entityRegistry = EnsureRegistry(services);
+        EnsureModelCustomizer(services);
     }
     public IServiceCollection Services { get; }
 
@@ -103,5 +106,16 @@ public class CrudQlBuilder : ICrudQlBuilder
         var registry = new CrudEntityRegistry();
         services.AddSingleton<ICrudEntityRegistry>(registry);
         return registry;
+    }
+
+    private static void EnsureModelCustomizer(IServiceCollection services)
+    {
+        var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IModelCustomizer));
+        if (descriptor != null)
+        {
+            return;
+        }
+
+        services.AddSingleton<IModelCustomizer, CrudQlModelCustomizer>();
     }
 }
