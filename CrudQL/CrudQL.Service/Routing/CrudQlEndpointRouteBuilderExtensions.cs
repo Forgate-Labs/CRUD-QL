@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
 using FluentValidation;
@@ -181,6 +182,25 @@ public static class CrudQlEndpointRouteBuilderExtensions
         if (includePaths.Count > 0)
         {
             queryable = CrudEntityExecutor.ApplyIncludes(queryable, registration.ClrType, includePaths);
+        }
+
+        if (!TryParseOrderByRequest(context, registration, out var orderByRequest, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        if (orderByRequest != null)
+        {
+            queryable = ApplyOrderBy(queryable, registration.ClrType, orderByRequest);
+        }
+        else if (registration.OrderByConfig?.DefaultField != null)
+        {
+            var defaultOrderBy = new OrderByRequest(new[]
+            {
+                new OrderByField(registration.OrderByConfig.DefaultField, registration.OrderByConfig.DefaultDirection)
+            });
+            queryable = ApplyOrderBy(queryable, registration.ClrType, defaultOrderBy);
         }
 
         if (!TryParsePaginationRequest(context, registration, out var paginationRequest, out error))
@@ -607,6 +627,124 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
         paginationRequest = new PaginationRequest(page, pageSize, includeCount);
         return true;
+    }
+
+    private static bool TryParseOrderByRequest(HttpContext context, CrudEntityRegistration registration, out OrderByRequest? orderByRequest, out IResult? error)
+    {
+        var query = context.Request.Query;
+        orderByRequest = null;
+        error = null;
+
+        if (!query.TryGetValue("orderBy", out var orderByValues))
+        {
+            return true;
+        }
+
+        var orderByString = orderByValues.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(orderByString))
+        {
+            return true;
+        }
+
+        var fields = new List<OrderByField>();
+        var parts = orderByString!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var part in parts)
+        {
+            var segments = part.Split(':', StringSplitOptions.TrimEntries);
+            if (segments.Length == 0 || string.IsNullOrWhiteSpace(segments[0]))
+            {
+                continue;
+            }
+
+            var fieldName = segments[0];
+            var direction = OrderDirection.Ascending;
+
+            if (segments.Length > 1)
+            {
+                var directionStr = segments[1].ToLowerInvariant();
+                if (directionStr == "desc" || directionStr == "descending")
+                {
+                    direction = OrderDirection.Descending;
+                }
+                else if (directionStr != "asc" && directionStr != "ascending")
+                {
+                    error = Results.BadRequest(new { message = $"Invalid order direction '{segments[1]}'. Use 'asc' or 'desc'" });
+                    return false;
+                }
+            }
+
+            if (registration.OrderByConfig?.AllowedFields != null)
+            {
+                var allowed = registration.OrderByConfig.AllowedFields.Any(f =>
+                    string.Equals(f, fieldName, StringComparison.OrdinalIgnoreCase));
+
+                if (!allowed)
+                {
+                    error = Results.BadRequest(new
+                    {
+                        message = $"Ordering by field '{fieldName}' is not allowed",
+                        allowedFields = registration.OrderByConfig.AllowedFields
+                    });
+                    return false;
+                }
+            }
+
+            fields.Add(new OrderByField(fieldName, direction));
+        }
+
+        if (fields.Count > 0)
+        {
+            orderByRequest = new OrderByRequest(fields);
+        }
+
+        return true;
+    }
+
+    private static IQueryable ApplyOrderBy(IQueryable queryable, Type entityType, OrderByRequest orderByRequest)
+    {
+        if (orderByRequest.Fields.Count == 0)
+        {
+            return queryable;
+        }
+
+        IOrderedQueryable? orderedQueryable = null;
+
+        foreach (var (field, index) in orderByRequest.Fields.Select((f, i) => (f, i)))
+        {
+            var parameter = Expression.Parameter(entityType, "x");
+            var property = entityType.GetProperty(field.FieldName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+
+            if (property == null)
+            {
+                continue;
+            }
+
+            var propertyAccess = Expression.MakeMemberAccess(parameter, property);
+            var lambda = Expression.Lambda(propertyAccess, parameter);
+
+            var methodName = index == 0
+                ? (field.Direction == OrderDirection.Ascending ? "OrderBy" : "OrderByDescending")
+                : (field.Direction == OrderDirection.Ascending ? "ThenBy" : "ThenByDescending");
+
+            var orderByMethod = typeof(Queryable)
+                .GetMethods()
+                .First(m => m.Name == methodName && m.GetParameters().Length == 2)
+                .MakeGenericMethod(entityType, property.PropertyType);
+
+            var resultQueryable = orderByMethod.Invoke(null, new object[] { orderedQueryable ?? queryable, lambda });
+
+            if (index == 0)
+            {
+                orderedQueryable = (IOrderedQueryable)resultQueryable!;
+            }
+            else
+            {
+                orderedQueryable = (IOrderedQueryable)resultQueryable!;
+            }
+        }
+
+        return orderedQueryable ?? queryable;
     }
 
     private static IReadOnlyCollection<string>? GetStringArray(JsonElement root, string propertyName)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
 using FluentValidation;
@@ -79,6 +80,18 @@ public sealed class CrudEntityBuilder<TEntity>
         var indexConfig = builder.Build();
 
         registry.SetIndexConfig(typeof(TEntity), indexConfig);
+        return this;
+    }
+
+    public CrudEntityBuilder<TEntity> ConfigureOrdering(Action<OrderByConfigBuilder<TEntity>> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new OrderByConfigBuilder<TEntity>();
+        configure(builder);
+        var orderByConfig = builder.Build();
+
+        registry.SetOrderByConfig(typeof(TEntity), orderByConfig);
         return this;
     }
 }

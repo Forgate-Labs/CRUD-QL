@@ -47,6 +47,9 @@ public sealed class ProductCrudSteps : IDisposable
     private string? lastResponseBody;
     private int? paginationDefaultPageSize;
     private int? paginationMaxPageSize;
+    private string[]? orderingAllowedFields;
+    private string? orderingDefaultField;
+    private string? orderingDefaultDirection;
 
     [Given("the Product policy allows only (.+) for CRUD actions")]
     public void GivenTheProductPolicyAllowsOnlyRolesForCrudActions(string roles)
@@ -189,6 +192,19 @@ public sealed class ProductCrudSteps : IDisposable
         paginationDefaultPageSize = defaultPageSize;
     }
 
+    [Given("the Product entity has ordering configured with allowed fields (.+)")]
+    public void GivenProductEntityHasOrderingConfiguredWithAllowedFields(string fields)
+    {
+        orderingAllowedFields = fields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    [Given("the Product entity has default ordering by (.+) (.+)")]
+    public void GivenProductEntityHasDefaultOrderingBy(string field, string direction)
+    {
+        orderingDefaultField = field;
+        orderingDefaultDirection = direction;
+    }
+
     [Given("the product catalog is empty")]
     public void GivenTheProductCatalogIsEmpty()
     {
@@ -231,6 +247,44 @@ public sealed class ProductCrudSteps : IDisposable
                             cfg.ConfigurePagination(
                                 paginationDefaultPageSize ?? 50,
                                 paginationMaxPageSize ?? 1000);
+                        }
+
+                        if (orderingAllowedFields != null || orderingDefaultField != null)
+                        {
+                            cfg.ConfigureOrdering(ordering =>
+                            {
+                                if (orderingAllowedFields != null)
+                                {
+                                    foreach (var field in orderingAllowedFields)
+                                    {
+                                        var fieldTrimmed = field.Trim();
+                                        if (string.Equals(fieldTrimmed, "price", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            ordering.AllowOrderBy(p => p.Price);
+                                        }
+                                        else if (string.Equals(fieldTrimmed, "name", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            ordering.AllowOrderBy(p => p.Name);
+                                        }
+                                    }
+                                }
+
+                                if (orderingDefaultField != null)
+                                {
+                                    var direction = string.Equals(orderingDefaultDirection, "descending", StringComparison.OrdinalIgnoreCase)
+                                        ? Service.Ordering.OrderDirection.Descending
+                                        : Service.Ordering.OrderDirection.Ascending;
+
+                                    if (string.Equals(orderingDefaultField, "price", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        ordering.WithDefault(p => p.Price, direction);
+                                    }
+                                    else if (string.Equals(orderingDefaultField, "name", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        ordering.WithDefault(p => p.Name, direction);
+                                    }
+                                }
+                            });
                         }
                     })
                     .AddEntitiesFromDbContext<FakeDbContext>();
@@ -845,6 +899,14 @@ public sealed class ProductCrudSteps : IDisposable
         Assert.That(lastProducts, Is.Not.Null);
         Assert.That(lastProducts!.Count, Is.GreaterThanOrEqualTo(2), "Product list has fewer than 2 items");
         Assert.That(lastProducts![1].Name, Is.EqualTo(expectedName));
+    }
+
+    [Then(@"the product at position (.+) should have name ""(.+)""")]
+    public void ThenProductAtPositionShouldHaveName(int position, string expectedName)
+    {
+        Assert.That(lastProducts, Is.Not.Null);
+        Assert.That(lastProducts!.Count, Is.GreaterThanOrEqualTo(position), $"Product list has fewer than {position} items");
+        Assert.That(lastProducts![position - 1].Name, Is.EqualTo(expectedName));
     }
 
     [Then(@"each product should only have fields ""(.+)""")]

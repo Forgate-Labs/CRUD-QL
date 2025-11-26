@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
@@ -25,4 +26,6 @@ public sealed record CrudEntityRegistration(string EntityName, Type ClrType)
     public PaginationConfig? PaginationConfig { get; init; }
 
     public IndexConfig? IndexConfig { get; init; }
+
+    public OrderByConfig? OrderByConfig { get; init; }
 }
