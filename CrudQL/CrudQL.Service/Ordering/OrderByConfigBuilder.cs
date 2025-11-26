@@ -33,7 +33,6 @@ public sealed class OrderByConfigBuilder<TEntity>
     {
         defaultField = GetPropertyName(fieldExpression);
         defaultDirection = direction;
-        allowedFields.Add(defaultField);
         return this;
     }
 

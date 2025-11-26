@@ -130,6 +130,7 @@ public static class CrudQlEndpointRouteBuilderExtensions
         }
 
         JsonElement? filterElement = null;
+        LambdaExpression? filterPredicate = null;
         if (context.Request.Query.TryGetValue("filter", out var filterValues))
         {
             var filterString = filterValues.FirstOrDefault();
@@ -139,10 +140,16 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 {
                     using var document = JsonDocument.Parse(filterString);
                     filterElement = document.RootElement.Clone();
+
+                    if (!CrudEntityExecutor.TryBuildConditionPredicate(registration, filterElement.Value, out filterPredicate, out error))
+                    {
+                        await error!.ExecuteAsync(context);
+                        return;
+                    }
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
-                    await Results.BadRequest(new { message = "Invalid JSON in 'filter' query parameter" }).ExecuteAsync(context);
+                    await Results.BadRequest(new { message = "Invalid JSON in 'filter' query parameter", detail = ex.Message }).ExecuteAsync(context);
                     return;
                 }
             }
@@ -164,6 +171,17 @@ public static class CrudQlEndpointRouteBuilderExtensions
         if (softDeleteRule != null)
         {
             queryable = CrudEntityExecutor.ApplySoftDeleteFilter(queryable, registration.ClrType, softDeleteRule);
+        }
+
+        if (filterPredicate != null)
+        {
+            var queryableWhereMethod = typeof(Queryable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .First(method => method.Name == nameof(Queryable.Where) && method.GetParameters().Length == 2);
+            var whereExpression = Expression.Call(
+                queryableWhereMethod.MakeGenericMethod(registration.ClrType),
+                queryable.Expression,
+                filterPredicate);
+            queryable = queryable.Provider.CreateQuery(whereExpression);
         }
 
         if (!TryResolveSelect(null, context.Request.Query, out var select, out error))
@@ -217,16 +235,17 @@ public static class CrudQlEndpointRouteBuilderExtensions
             var page = paginationRequest.Page;
             var skip = (page - 1) * pageSize;
 
+            var cast = Queryable.Cast<object>(queryable);
+
             int? totalRecords = null;
             if (paginationRequest.IncludeCount)
             {
-                totalRecords = await EntityFrameworkQueryableExtensions.CountAsync(queryable, context.RequestAborted);
+                totalRecords = await EntityFrameworkQueryableExtensions.CountAsync(cast, context.RequestAborted);
             }
 
-            queryable = Queryable.Skip(queryable, skip);
-            queryable = Queryable.Take(queryable, pageSize);
+            cast = Queryable.Skip(cast, skip);
+            cast = Queryable.Take(cast, pageSize);
 
-            var cast = Queryable.Cast<object>(queryable);
             var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
             var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
             var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
@@ -245,7 +264,27 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 totalRecords,
                 totalPages);
 
-            await Results.Json(new { data, pagination = paginationResponse }, SerializerOptions).ExecuteAsync(context);
+            object responsePayload;
+            if (totalRecords.HasValue)
+            {
+                responsePayload = new { data, pagination = paginationResponse };
+            }
+            else
+            {
+                responsePayload = new
+                {
+                    data,
+                    pagination = new
+                    {
+                        page = paginationResponse.Page,
+                        pageSize = paginationResponse.PageSize,
+                        hasNextPage = paginationResponse.HasNextPage,
+                        hasPreviousPage = paginationResponse.HasPreviousPage
+                    }
+                };
+            }
+
+            await Results.Json(responsePayload, SerializerOptions).ExecuteAsync(context);
         }
         else
         {

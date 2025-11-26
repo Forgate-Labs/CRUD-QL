@@ -68,7 +68,7 @@ Feature: GET Pagination
     And the response pagination should not have totalPages
 
   Scenario: Pagination with filtering
-    When I send a GET request to "/crud?entity=Product&page=1&pageSize=2&filter={\"field\":\"price\",\"op\":\"gte\",\"value\":50}"
+    When I send a GET request to "/crud?entity=Product&page=1&pageSize=2&filter=%7B%22field%22%3A%22price%22%2C%22op%22%3A%22gte%22%2C%22value%22%3A50%7D"
     Then the response status code should be 200
     And the response data should contain 2 products
     And the first product should have name "Product 5"
@@ -103,7 +103,21 @@ Feature: GET Pagination
 
   Scenario: Page size exceeds maximum allowed
     Given the Product entity has max page size configured as 100
-    When I send a GET request to "/crud?entity=Product&page=1&pageSize=500"
+    And the product catalog is empty
+    And the authenticated user has roles catalog
+    When I create the following products through POST /crud
+      | Name       | Description | Price  | Currency |
+      | Product 1  | Item 1      | 10.00  | USD      |
+      | Product 2  | Item 2      | 20.00  | USD      |
+      | Product 3  | Item 3      | 30.00  | USD      |
+      | Product 4  | Item 4      | 40.00  | USD      |
+      | Product 5  | Item 5      | 50.00  | USD      |
+      | Product 6  | Item 6      | 60.00  | USD      |
+      | Product 7  | Item 7      | 70.00  | USD      |
+      | Product 8  | Item 8      | 80.00  | USD      |
+      | Product 9  | Item 9      | 90.00  | USD      |
+      | Product 10 | Item 10     | 100.00 | USD      |
+    And I send a GET request to "/crud?entity=Product&page=1&pageSize=500"
     Then the response status code should be 400
     And the response should contain error message "PageSize cannot exceed 100"
 
@@ -115,7 +129,21 @@ Feature: GET Pagination
 
   Scenario: Default page size is applied when not specified
     Given the Product entity has default page size configured as 5
-    When I send a GET request to "/crud?entity=Product&page=1"
+    And the product catalog is empty
+    And the authenticated user has roles catalog
+    When I create the following products through POST /crud
+      | Name       | Description | Price  | Currency |
+      | Product 1  | Item 1      | 10.00  | USD      |
+      | Product 2  | Item 2      | 20.00  | USD      |
+      | Product 3  | Item 3      | 30.00  | USD      |
+      | Product 4  | Item 4      | 40.00  | USD      |
+      | Product 5  | Item 5      | 50.00  | USD      |
+      | Product 6  | Item 6      | 60.00  | USD      |
+      | Product 7  | Item 7      | 70.00  | USD      |
+      | Product 8  | Item 8      | 80.00  | USD      |
+      | Product 9  | Item 9      | 90.00  | USD      |
+      | Product 10 | Item 10     | 100.00 | USD      |
+    And I send a GET request to "/crud?entity=Product&page=1"
     Then the response status code should be 200
     And the response data should contain 5 products
     And the response pagination should have pageSize 5

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using CrudQL.Service.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace CrudQL.Service.Indexes;
 
@@ -25,8 +26,8 @@ public static class IndexConfigurationExtensions
             {
                 var propertyNames = indexDef.Fields.Select(f => f.FieldName).ToArray();
 
-                var indexBuilder = entityTypeBuilder.HasIndex(propertyNames)
-                    .HasDatabaseName(indexDef.Name);
+                var indexBuilder = entityTypeBuilder.HasIndex(propertyNames);
+                indexBuilder.Metadata.SetAnnotation("Relational:Name", indexDef.Name);
 
                 if (indexDef.IsUnique)
                 {
@@ -35,7 +36,7 @@ public static class IndexConfigurationExtensions
 
                 if (!string.IsNullOrWhiteSpace(indexDef.Filter))
                 {
-                    indexBuilder.HasFilter(indexDef.Filter);
+                    indexBuilder.Metadata.SetAnnotation("Relational:Filter", indexDef.Filter);
                 }
 
                 var descendingFields = indexDef.Fields
