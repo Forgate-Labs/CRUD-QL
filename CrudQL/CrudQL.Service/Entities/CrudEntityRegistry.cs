@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Authorization;
+using CrudQL.Service.Pagination;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 
@@ -86,6 +87,29 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
             var registration = new CrudEntityRegistration(entityType.Name, entityType)
             {
                 Policy = policy
+            };
+            registrations[entityType] = registration;
+            registrationsByName[registration.EntityName] = registration;
+        }
+    }
+
+    public void SetPaginationConfig(Type entityType, PaginationConfig? paginationConfig)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+
+        lock (gate)
+        {
+            if (registrations.TryGetValue(entityType, out var existing))
+            {
+                var updated = existing with { PaginationConfig = paginationConfig };
+                registrations[entityType] = updated;
+                registrationsByName[updated.EntityName] = updated;
+                return;
+            }
+
+            var registration = new CrudEntityRegistration(entityType.Name, entityType)
+            {
+                PaginationConfig = paginationConfig
             };
             registrations[entityType] = registration;
             registrationsByName[registration.EntityName] = registration;

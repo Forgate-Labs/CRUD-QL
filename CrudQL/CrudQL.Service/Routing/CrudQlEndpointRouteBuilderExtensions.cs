@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
 using FluentValidation;
 using FluentValidation.Results;
@@ -182,11 +183,58 @@ public static class CrudQlEndpointRouteBuilderExtensions
             queryable = CrudEntityExecutor.ApplyIncludes(queryable, registration.ClrType, includePaths);
         }
 
-        var cast = Queryable.Cast<object>(queryable);
-        var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
-        var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
-        var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
-        await Results.Json(new { data }, SerializerOptions).ExecuteAsync(context);
+        if (!TryParsePaginationRequest(context, registration, out var paginationRequest, out error))
+        {
+            await error!.ExecuteAsync(context);
+            return;
+        }
+
+        PaginationResponse? paginationResponse = null;
+        if (paginationRequest != null)
+        {
+            var paginationConfig = registration.PaginationConfig ?? new PaginationConfig();
+            var pageSize = paginationRequest.PageSize;
+            var page = paginationRequest.Page;
+            var skip = (page - 1) * pageSize;
+
+            int? totalRecords = null;
+            if (paginationRequest.IncludeCount)
+            {
+                totalRecords = await EntityFrameworkQueryableExtensions.CountAsync(queryable, context.RequestAborted);
+            }
+
+            queryable = Queryable.Skip(queryable, skip);
+            queryable = Queryable.Take(queryable, pageSize);
+
+            var cast = Queryable.Cast<object>(queryable);
+            var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
+            var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
+            var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
+
+            var hasNextPage = totalRecords.HasValue
+                ? skip + pageSize < totalRecords.Value
+                : data.Count == pageSize;
+            var hasPreviousPage = page > 1;
+            var totalPages = totalRecords.HasValue ? (int)Math.Ceiling((double)totalRecords.Value / pageSize) : (int?)null;
+
+            paginationResponse = new PaginationResponse(
+                page,
+                pageSize,
+                hasNextPage,
+                hasPreviousPage,
+                totalRecords,
+                totalPages);
+
+            await Results.Json(new { data, pagination = paginationResponse }, SerializerOptions).ExecuteAsync(context);
+        }
+        else
+        {
+            var cast = Queryable.Cast<object>(queryable);
+            var entities = await EntityFrameworkQueryableExtensions.ToListAsync(cast, context.RequestAborted);
+            var projectionContext = CrudEntityExecutor.ResolveProjection(context, registration, CrudAction.Read);
+            var data = entities.Select(item => CrudEntityExecutor.Project(item!, select, projectionContext)).ToList();
+            await Results.Json(new { data }, SerializerOptions).ExecuteAsync(context);
+        }
     }
 
     private static async Task HandleUpdate(HttpContext context, [FromServices] ICrudEntityRegistry registry)
@@ -500,6 +548,64 @@ public static class CrudQlEndpointRouteBuilderExtensions
             ? null
             : new CrudEntityExecutor.SelectNode(fields, CrudEntityExecutor.CreateEmptyIncludeMap());
         error = null;
+        return true;
+    }
+
+    private static bool TryParsePaginationRequest(HttpContext context, CrudEntityRegistration registration, out PaginationRequest? paginationRequest, out IResult? error)
+    {
+        var query = context.Request.Query;
+        paginationRequest = null;
+        error = null;
+
+        var hasPage = query.TryGetValue("page", out var pageValues);
+        var hasPageSize = query.TryGetValue("pageSize", out var pageSizeValues);
+        var hasIncludeCount = query.TryGetValue("includeCount", out var includeCountValues);
+
+        if (!hasPage && !hasPageSize)
+        {
+            return true;
+        }
+
+        if (!hasPage)
+        {
+            error = Results.BadRequest(new { message = "When using pagination, 'page' parameter is required" });
+            return false;
+        }
+
+        if (!int.TryParse(pageValues.FirstOrDefault(), out var page) || page < 1)
+        {
+            error = Results.BadRequest(new { message = "Page must be greater than or equal to 1" });
+            return false;
+        }
+
+        var paginationConfig = registration.PaginationConfig ?? new PaginationConfig();
+        var pageSize = paginationConfig.DefaultPageSize;
+
+        if (hasPageSize)
+        {
+            if (!int.TryParse(pageSizeValues.FirstOrDefault(), out pageSize) || pageSize < 1)
+            {
+                error = Results.BadRequest(new { message = "PageSize must be greater than or equal to 1" });
+                return false;
+            }
+
+            if (pageSize > paginationConfig.MaxPageSize)
+            {
+                error = Results.BadRequest(new { message = $"PageSize cannot exceed {paginationConfig.MaxPageSize}" });
+                return false;
+            }
+        }
+
+        var includeCount = false;
+        if (hasIncludeCount)
+        {
+            if (bool.TryParse(includeCountValues.FirstOrDefault(), out var parsedIncludeCount))
+            {
+                includeCount = parsedIncludeCount;
+            }
+        }
+
+        paginationRequest = new PaginationRequest(page, pageSize, includeCount);
         return true;
     }
 

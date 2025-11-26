@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
+using CrudQL.Service.Pagination;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,6 +16,8 @@ public interface ICrudEntityRegistry
     void RegisterEntitySetResolver(Type entityType, Func<IServiceProvider, object> setResolver, Func<IServiceProvider, DbContext> contextResolver);
 
     void SetPolicy(Type entityType, ICrudPolicy? policy);
+
+    void SetPaginationConfig(Type entityType, PaginationConfig? paginationConfig);
 
     void AddValidator(Type entityType, Type targetType, IValidator validator, IReadOnlyCollection<CrudAction> actions);
 

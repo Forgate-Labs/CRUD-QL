@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
 using FluentValidation;
 
@@ -44,6 +45,27 @@ public sealed class CrudEntityBuilder<TEntity>
         ArgumentException.ThrowIfNullOrWhiteSpace(includePath);
         var allowedRoles = roles is { Length: > 0 } ? roles : null;
         registry.AddInclude(typeof(TEntity), includePath, allowedRoles);
+        return this;
+    }
+
+    public CrudEntityBuilder<TEntity> ConfigurePagination(int defaultPageSize = 50, int maxPageSize = 1000)
+    {
+        if (defaultPageSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(defaultPageSize), "Default page size must be at least 1");
+        }
+
+        if (maxPageSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxPageSize), "Max page size must be at least 1");
+        }
+
+        if (defaultPageSize > maxPageSize)
+        {
+            throw new ArgumentException("Default page size cannot exceed max page size");
+        }
+
+        registry.SetPaginationConfig(typeof(TEntity), new PaginationConfig(defaultPageSize, maxPageSize));
         return this;
     }
 }

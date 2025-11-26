@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
+using CrudQL.Service.Pagination;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,4 +20,6 @@ public sealed record CrudEntityRegistration(string EntityName, Type ClrType)
 
     public IReadOnlyDictionary<string, CrudEntityIncludeRegistration> Includes { get; init; } =
         new Dictionary<string, CrudEntityIncludeRegistration>(StringComparer.OrdinalIgnoreCase);
+
+    public PaginationConfig? PaginationConfig { get; init; }
 }
