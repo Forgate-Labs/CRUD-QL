@@ -45,6 +45,8 @@ public sealed class ProductCrudSteps : IDisposable
     private ClaimsPrincipal? currentUser;
     private HttpStatusCode? lastStatusCode;
     private string? lastResponseBody;
+    private int? paginationDefaultPageSize;
+    private int? paginationMaxPageSize;
 
     [Given("the Product policy allows only (.+) for CRUD actions")]
     public void GivenTheProductPolicyAllowsOnlyRolesForCrudActions(string roles)
@@ -175,6 +177,18 @@ public sealed class ProductCrudSteps : IDisposable
         currentUser = new ClaimsPrincipal(identity);
     }
 
+    [Given("the Product entity has max page size configured as (.+)")]
+    public void GivenProductEntityHasMaxPageSizeConfigured(int maxPageSize)
+    {
+        paginationMaxPageSize = maxPageSize;
+    }
+
+    [Given("the Product entity has default page size configured as (.+)")]
+    public void GivenProductEntityHasDefaultPageSizeConfigured(int defaultPageSize)
+    {
+        paginationDefaultPageSize = defaultPageSize;
+    }
+
     [Given("the product catalog is empty")]
     public void GivenTheProductCatalogIsEmpty()
     {
@@ -210,6 +224,13 @@ public sealed class ProductCrudSteps : IDisposable
                             {
                                 cfg.UseFilterValidator((IValidator<CrudFilterContext>)validator);
                             }
+                        }
+
+                        if (paginationDefaultPageSize.HasValue || paginationMaxPageSize.HasValue)
+                        {
+                            cfg.ConfigurePagination(
+                                paginationDefaultPageSize ?? 50,
+                                paginationMaxPageSize ?? 1000);
                         }
                     })
                     .AddEntitiesFromDbContext<FakeDbContext>();
@@ -698,6 +719,159 @@ public sealed class ProductCrudSteps : IDisposable
         {
             Assert.That(names, Does.Not.Contain(name));
         }
+    }
+
+    [When(@"I send a GET request to ""(.+)""")]
+    public async Task WhenISendGetRequestTo(string path)
+    {
+        var currentClient = EnsureClient();
+        var response = await currentClient.GetAsync(path);
+        lastStatusCode = response.StatusCode;
+        lastResponseBody = await response.Content.ReadAsStringAsync();
+
+        if (response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(lastResponseBody))
+        {
+            var collection = TryDeserializeCollectionResponse(lastResponseBody);
+            lastProducts = collection?.Data;
+        }
+    }
+
+    [Then("the response status code should be (.+)")]
+    public void ThenResponseStatusCodeShouldBe(int expectedStatusCode)
+    {
+        Assert.That((int)lastStatusCode!.Value, Is.EqualTo(expectedStatusCode),
+            $"Expected status {expectedStatusCode} but got {(int)lastStatusCode!.Value}. Response: {lastResponseBody}");
+    }
+
+    [Then("the response data should contain (.+) products")]
+    public void ThenResponseDataShouldContainProducts(int count)
+    {
+        Assert.That(lastProducts, Is.Not.Null, "Response data is null");
+        Assert.That(lastProducts!.Count, Is.EqualTo(count), $"Expected {count} products but got {lastProducts!.Count}");
+    }
+
+    [Then("the response pagination should have page (.+)")]
+    public void ThenResponsePaginationShouldHavePage(int page)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        Assert.That(document.RootElement.TryGetProperty("pagination", out var pagination), Is.True, "Response does not contain 'pagination' property");
+        Assert.That(pagination.TryGetProperty("page", out var pageProperty), Is.True, "Pagination does not contain 'page' property");
+        Assert.That(pageProperty.GetInt32(), Is.EqualTo(page));
+    }
+
+    [Then("the response pagination should have pageSize (.+)")]
+    public void ThenResponsePaginationShouldHavePageSize(int pageSize)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.GetProperty("pageSize").GetInt32(), Is.EqualTo(pageSize));
+    }
+
+    [Then("the response pagination should have totalRecords (.+)")]
+    public void ThenResponsePaginationShouldHaveTotalRecords(int totalRecords)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.GetProperty("totalRecords").GetInt32(), Is.EqualTo(totalRecords));
+    }
+
+    [Then("the response pagination should have totalPages (.+)")]
+    public void ThenResponsePaginationShouldHaveTotalPages(int totalPages)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.GetProperty("totalPages").GetInt32(), Is.EqualTo(totalPages));
+    }
+
+    [Then("the response pagination should have hasNextPage (.+)")]
+    public void ThenResponsePaginationShouldHaveHasNextPage(bool hasNextPage)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.GetProperty("hasNextPage").GetBoolean(), Is.EqualTo(hasNextPage));
+    }
+
+    [Then("the response pagination should have hasPreviousPage (.+)")]
+    public void ThenResponsePaginationShouldHaveHasPreviousPage(bool hasPreviousPage)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.GetProperty("hasPreviousPage").GetBoolean(), Is.EqualTo(hasPreviousPage));
+    }
+
+    [Then("the response pagination should not have totalRecords")]
+    public void ThenResponsePaginationShouldNotHaveTotalRecords()
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.TryGetProperty("totalRecords", out _), Is.False, "Pagination should not contain 'totalRecords' property");
+    }
+
+    [Then("the response pagination should not have totalPages")]
+    public void ThenResponsePaginationShouldNotHaveTotalPages()
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var pagination = document.RootElement.GetProperty("pagination");
+        Assert.That(pagination.TryGetProperty("totalPages", out _), Is.False, "Pagination should not contain 'totalPages' property");
+    }
+
+    [Then("the response should not have pagination metadata")]
+    public void ThenResponseShouldNotHavePaginationMetadata()
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        Assert.That(document.RootElement.TryGetProperty("pagination", out _), Is.False, "Response should not contain 'pagination' property");
+    }
+
+    [Then(@"the first product should have name ""(.+)""")]
+    public void ThenFirstProductShouldHaveName(string expectedName)
+    {
+        Assert.That(lastProducts, Is.Not.Null);
+        Assert.That(lastProducts!.Count, Is.GreaterThan(0), "Product list is empty");
+        Assert.That(lastProducts![0].Name, Is.EqualTo(expectedName));
+    }
+
+    [Then(@"the second product should have name ""(.+)""")]
+    public void ThenSecondProductShouldHaveName(string expectedName)
+    {
+        Assert.That(lastProducts, Is.Not.Null);
+        Assert.That(lastProducts!.Count, Is.GreaterThanOrEqualTo(2), "Product list has fewer than 2 items");
+        Assert.That(lastProducts![1].Name, Is.EqualTo(expectedName));
+    }
+
+    [Then(@"each product should only have fields ""(.+)""")]
+    public void ThenEachProductShouldOnlyHaveFields(string fieldsCsv)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        var expectedFields = fieldsCsv.Split(',').Select(f => f.Trim()).OrderBy(f => f).ToArray();
+        var data = document.RootElement.GetProperty("data");
+
+        foreach (var product in data.EnumerateArray())
+        {
+            var actualFields = product.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray();
+            Assert.That(actualFields, Is.EqualTo(expectedFields),
+                $"Expected fields [{string.Join(", ", expectedFields)}] but got [{string.Join(", ", actualFields)}]");
+        }
+    }
+
+    [Then(@"the response should contain error message ""(.+)""")]
+    public void ThenResponseShouldContainErrorMessage(string expectedMessage)
+    {
+        Assert.That(lastResponseBody, Is.Not.Null);
+        using var document = JsonDocument.Parse(lastResponseBody!);
+        Assert.That(document.RootElement.TryGetProperty("message", out var message), Is.True, "Response does not contain 'message' property");
+        var actualMessage = message.GetString();
+        Assert.That(actualMessage, Does.Contain(expectedMessage),
+            $"Expected message to contain '{expectedMessage}' but got '{actualMessage}'");
     }
 
     public void Dispose()
