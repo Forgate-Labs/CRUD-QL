@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>CrudQL.Service</PackageId>
-    <Version>0.4.0</Version>
+    <Version>0.4.1</Version>
     <Authors>Eduardo Cunha</Authors>
     <RepositoryUrl>https://github.com/eduardofacunha/CRUD-QL</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

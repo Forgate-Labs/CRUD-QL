@@ -132,6 +132,6 @@ public class CrudQlBuilder : ICrudQlBuilder
             return;
         }
 
-        services.AddSingleton<IModelCustomizer, CrudQlModelCustomizer>();
+        services.AddScoped<IModelCustomizer, CrudQlModelCustomizer>();
     }
 }
