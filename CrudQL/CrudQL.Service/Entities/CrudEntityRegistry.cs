@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using FluentValidation;
@@ -15,6 +16,8 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
     private readonly object gate = new();
     private readonly Dictionary<Type, CrudEntityRegistration> registrations = new();
     private readonly Dictionary<string, CrudEntityRegistration> registrationsByName = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<EntityLifecycleHook> globalCreatingHooks = new();
+    private readonly List<EntityLifecycleHook> globalUpdatingHooks = new();
 
     public IReadOnlyCollection<CrudEntityRegistration> Entities
     {
@@ -254,6 +257,55 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
         lock (gate)
         {
             return registrationsByName.TryGetValue(entityName, out registration!);
+        }
+    }
+
+    public void AddEntityLifecycleHook(Type entityType, CrudAction action, EntityLifecycleHook hook)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+        ArgumentNullException.ThrowIfNull(hook);
+
+        lock (gate)
+        {
+            if (!registrations.TryGetValue(entityType, out var existing))
+            {
+                throw new InvalidOperationException($"Entity '{entityType.Name}' is not registered. Call RegisterEntity first.");
+            }
+
+            var hooks = action == CrudAction.Create
+                ? existing.OnCreatingHooks.ToList()
+                : existing.OnUpdatingHooks.ToList();
+            hooks.Add(hook);
+
+            var updated = action == CrudAction.Create
+                ? existing with { OnCreatingHooks = hooks }
+                : existing with { OnUpdatingHooks = hooks };
+
+            registrations[entityType] = updated;
+            registrationsByName[updated.EntityName] = updated;
+        }
+    }
+
+    public void AddGlobalLifecycleHook(CrudAction action, EntityLifecycleHook hook)
+    {
+        ArgumentNullException.ThrowIfNull(hook);
+
+        lock (gate)
+        {
+            if (action == CrudAction.Create)
+                globalCreatingHooks.Add(hook);
+            else
+                globalUpdatingHooks.Add(hook);
+        }
+    }
+
+    public IReadOnlyList<EntityLifecycleHook> GetGlobalHooks(CrudAction action)
+    {
+        lock (gate)
+        {
+            return action == CrudAction.Create
+                ? globalCreatingHooks.ToList()
+                : globalUpdatingHooks.ToList();
         }
     }
 

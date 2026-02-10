@@ -2,8 +2,10 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Lifecycle;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -56,6 +58,20 @@ public class CrudQlBuilder : ICrudQlBuilder
             RegisterResolver(registration.ClrType);
         }
 
+        return this;
+    }
+
+    public ICrudQlBuilder OnEntityCreating(EntityLifecycleHook hook)
+    {
+        ArgumentNullException.ThrowIfNull(hook);
+        entityRegistry.AddGlobalLifecycleHook(CrudAction.Create, hook);
+        return this;
+    }
+
+    public ICrudQlBuilder OnEntityUpdating(EntityLifecycleHook hook)
+    {
+        ArgumentNullException.ThrowIfNull(hook);
+        entityRegistry.AddGlobalLifecycleHook(CrudAction.Update, hook);
         return this;
     }
 

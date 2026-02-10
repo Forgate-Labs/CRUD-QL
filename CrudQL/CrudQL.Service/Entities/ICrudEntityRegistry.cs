@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using FluentValidation;
@@ -32,4 +33,10 @@ public interface ICrudEntityRegistry
     DbSet<TEntity> ResolveSet<TEntity>(IServiceProvider serviceProvider) where TEntity : class;
 
     bool TryGetEntity(string entityName, out CrudEntityRegistration registration);
+
+    void AddEntityLifecycleHook(Type entityType, CrudAction action, EntityLifecycleHook hook);
+
+    void AddGlobalLifecycleHook(CrudAction action, EntityLifecycleHook hook);
+
+    IReadOnlyList<EntityLifecycleHook> GetGlobalHooks(CrudAction action);
 }
