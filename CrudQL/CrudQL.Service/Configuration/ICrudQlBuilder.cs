@@ -1,4 +1,5 @@
 using System;
+using CrudQL.Service.Lifecycle;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -13,4 +14,8 @@ public interface ICrudQlBuilder
     ICrudQlBuilder AddEntity<TEntity>(Action<CrudEntityBuilder<TEntity>> configure);
 
     ICrudQlBuilder AddEntitiesFromDbContext<TContext>() where TContext : DbContext;
+
+    ICrudQlBuilder OnEntityCreating(EntityLifecycleHook hook);
+
+    ICrudQlBuilder OnEntityUpdating(EntityLifecycleHook hook);
 }

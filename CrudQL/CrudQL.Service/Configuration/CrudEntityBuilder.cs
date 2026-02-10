@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
 using FluentValidation;
+using Microsoft.AspNetCore.Http;
 
 namespace CrudQL.Service.Configuration;
 
@@ -92,6 +94,22 @@ public sealed class CrudEntityBuilder<TEntity>
         var orderByConfig = builder.Build();
 
         registry.SetOrderByConfig(typeof(TEntity), orderByConfig);
+        return this;
+    }
+
+    public CrudEntityBuilder<TEntity> OnCreating(Action<TEntity, HttpContext> hook)
+    {
+        ArgumentNullException.ThrowIfNull(hook);
+        registry.AddEntityLifecycleHook(typeof(TEntity), CrudAction.Create,
+            (entity, ctx) => hook((TEntity)entity, ctx));
+        return this;
+    }
+
+    public CrudEntityBuilder<TEntity> OnUpdating(Action<TEntity, HttpContext> hook)
+    {
+        ArgumentNullException.ThrowIfNull(hook);
+        registry.AddEntityLifecycleHook(typeof(TEntity), CrudAction.Update,
+            (entity, ctx) => hook((TEntity)entity, ctx));
         return this;
     }
 }

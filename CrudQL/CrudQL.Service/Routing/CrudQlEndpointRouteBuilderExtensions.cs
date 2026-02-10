@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Entities;
+using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using CrudQL.Service.Validation;
@@ -89,6 +90,8 @@ public static class CrudQlEndpointRouteBuilderExtensions
             await error!.ExecuteAsync(context);
             return;
         }
+
+        CrudEntityExecutor.ExecuteLifecycleHooks(context, registry, registration, CrudAction.Create, entity!);
 
         if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Create, entity!, out error))
         {
@@ -368,6 +371,8 @@ public static class CrudQlEndpointRouteBuilderExtensions
                 await error!.ExecuteAsync(context);
                 return;
             }
+
+            CrudEntityExecutor.ExecuteLifecycleHooks(context, registry, registration, CrudAction.Update, match);
 
             if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Update, match, out error))
             {
@@ -843,6 +848,20 @@ public static class CrudQlEndpointRouteBuilderExtensions
 
     private static class CrudEntityExecutor
     {
+        public static void ExecuteLifecycleHooks(
+            HttpContext context, ICrudEntityRegistry registry,
+            CrudEntityRegistration registration, CrudAction action, object entity)
+        {
+            foreach (var hook in registry.GetGlobalHooks(action))
+                hook(entity, context);
+
+            var entityHooks = action == CrudAction.Create
+                ? registration.OnCreatingHooks
+                : registration.OnUpdatingHooks;
+            foreach (var hook in entityHooks)
+                hook(entity, context);
+        }
+
         private static readonly JsonNamingPolicy NamingPolicy = JsonNamingPolicy.CamelCase;
         private static readonly ConcurrentDictionary<Type, EntityMetadata> MetadataCache = new();
         private static readonly ConcurrentDictionary<Type, Func<DbContext, object>> DbSetAccessors = new();

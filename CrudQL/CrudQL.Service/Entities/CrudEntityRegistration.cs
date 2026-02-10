@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using CrudQL.Service.Authorization;
 using CrudQL.Service.Indexes;
+using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
 using CrudQL.Service.Pagination;
 using FluentValidation;
@@ -28,4 +29,8 @@ public sealed record CrudEntityRegistration(string EntityName, Type ClrType)
     public IndexConfig? IndexConfig { get; init; }
 
     public OrderByConfig? OrderByConfig { get; init; }
+
+    public IReadOnlyList<EntityLifecycleHook> OnCreatingHooks { get; init; } = [];
+
+    public IReadOnlyList<EntityLifecycleHook> OnUpdatingHooks { get; init; } = [];
 }
