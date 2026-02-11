@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace CrudQL.Service.Authorization;
 
-public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectionPolicy, ISoftDeletePolicy
+public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectionPolicy, ISoftDeletePolicy, IRowFilterPolicy
 {
     private static readonly JsonNamingPolicy NamingPolicy = JsonNamingPolicy.CamelCase;
     private readonly Dictionary<CrudAction, ActionRule> rules = new();
@@ -248,6 +248,19 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         return rule.SoftDeleteRule;
     }
 
+    LambdaExpression? IRowFilterPolicy.ResolveRowFilter(ClaimsPrincipal user, CrudAction action)
+    {
+        if (!rules.TryGetValue(action, out var rule))
+        {
+            return null;
+        }
+
+        var match = rule.Assignments
+            .FirstOrDefault(a => a.RowFilterResolver != null && a.Roles.Any(user.IsInRole));
+
+        return match?.RowFilterResolver?.Invoke(user);
+    }
+
     private string ResolveFieldName(Expression<Func<TEntity, object>> selector)
     {
         ArgumentNullException.ThrowIfNull(selector);
@@ -334,6 +347,8 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
 
         public HashSet<string>? Fields { get; private set; }
 
+        public Func<ClaimsPrincipal, LambdaExpression?>? RowFilterResolver { get; set; }
+
         public void AssignFields(IEnumerable<string> names)
         {
             Fields ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -350,6 +365,7 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
         private readonly CrudAction action;
         private readonly ActionRule rule;
         private RoleAssignment? currentAssignment;
+        private RoleAssignment? previousAssignment;
 
         internal CrudActionConfigurator(CrudPolicy<TEntity> policy, CrudAction action, ActionRule rule)
         {
@@ -408,6 +424,7 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
             {
                 var fields = selectors.Select(policy.ResolveFieldName);
                 currentAssignment.AssignFields(fields);
+                previousAssignment = currentAssignment;
                 currentAssignment = null;
             }
 
@@ -428,7 +445,27 @@ public abstract class CrudPolicy<TEntity> : ICrudPolicy<TEntity>, ICrudProjectio
             }
 
             rule.HasFieldConfiguration = true;
+            previousAssignment = currentAssignment;
             currentAssignment = null;
+            return this;
+        }
+
+        public CrudActionConfigurator WithRowFilter(
+            Func<ClaimsPrincipal, Expression<Func<TEntity, bool>>?> resolver)
+        {
+            if (action is not CrudAction.Read)
+                throw new InvalidOperationException("Row filter is only supported for Read.");
+
+            var target = currentAssignment ?? previousAssignment;
+            if (target == null)
+                throw new InvalidOperationException(
+                    "WithRowFilter must be chained after ForAllFields/ForFields.");
+
+            target.RowFilterResolver = user =>
+            {
+                var expr = resolver(user);
+                return expr;
+            };
             return this;
         }
 

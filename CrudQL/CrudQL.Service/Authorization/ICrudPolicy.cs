@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Security.Claims;
 
@@ -28,3 +29,8 @@ public interface ISoftDeletePolicy
 }
 
 public sealed record CrudSoftDeleteRule(PropertyInfo FlagProperty, PropertyInfo? TimestampProperty, bool UseUtc);
+
+public interface IRowFilterPolicy
+{
+    LambdaExpression? ResolveRowFilter(ClaimsPrincipal user, CrudAction action);
+}

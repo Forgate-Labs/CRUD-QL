@@ -75,6 +75,12 @@ public class CrudQlBuilder : ICrudQlBuilder
         return this;
     }
 
+    public ICrudQlBuilder UseTenantFilter(string claimType = "tenant_id", string propertyName = "TenantId")
+    {
+        entityRegistry.SetTenantFilterConfig(new TenantFilterConfig(claimType, propertyName));
+        return this;
+    }
+
     private void RegisterResolver(Type entityType)
     {
         if (dbContextType == null)

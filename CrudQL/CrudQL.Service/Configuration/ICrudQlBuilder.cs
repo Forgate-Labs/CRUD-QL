@@ -18,4 +18,6 @@ public interface ICrudQlBuilder
     ICrudQlBuilder OnEntityCreating(EntityLifecycleHook hook);
 
     ICrudQlBuilder OnEntityUpdating(EntityLifecycleHook hook);
+
+    ICrudQlBuilder UseTenantFilter(string claimType = "tenant_id", string propertyName = "TenantId");
 }
