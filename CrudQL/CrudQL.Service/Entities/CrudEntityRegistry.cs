@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using CrudQL.Service.Authorization;
+using CrudQL.Service.Configuration;
 using CrudQL.Service.Indexes;
 using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
@@ -307,6 +308,14 @@ internal sealed class CrudEntityRegistry : ICrudEntityRegistry
                 ? globalCreatingHooks.ToList()
                 : globalUpdatingHooks.ToList();
         }
+    }
+
+    public TenantFilterConfig? TenantFilterConfig { get; private set; }
+
+    public void SetTenantFilterConfig(TenantFilterConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        TenantFilterConfig = config;
     }
 
     private static IReadOnlyDictionary<CrudAction, IReadOnlyList<CrudValidatorRegistration>> MergeValidators(

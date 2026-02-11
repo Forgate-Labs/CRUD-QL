@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Security.Claims;
 using CrudQL.Service.Authorization;
+using CrudQL.Service.Configuration;
 using CrudQL.Service.Entities;
 using CrudQL.Service.Lifecycle;
 using CrudQL.Service.Ordering;
@@ -174,6 +175,22 @@ public static class CrudQlEndpointRouteBuilderExtensions
         if (softDeleteRule != null)
         {
             queryable = CrudEntityExecutor.ApplySoftDeleteFilter(queryable, registration.ClrType, softDeleteRule);
+        }
+
+        var tenantConfig = registry.TenantFilterConfig;
+        if (tenantConfig != null)
+        {
+            var tenantFilter = CrudEntityExecutor.ResolveTenantFilter(context, registration, tenantConfig);
+            if (tenantFilter != null)
+                queryable = CrudEntityExecutor.ApplyExpressionFilter(queryable, registration.ClrType, tenantFilter);
+        }
+
+        if (registration.Policy is IRowFilterPolicy rowFilterPolicy)
+        {
+            var rowFilter = rowFilterPolicy.ResolveRowFilter(
+                context.User ?? new ClaimsPrincipal(), CrudAction.Read);
+            if (rowFilter != null)
+                queryable = CrudEntityExecutor.ApplyExpressionFilter(queryable, registration.ClrType, rowFilter);
         }
 
         if (filterPredicate != null)
@@ -351,6 +368,14 @@ public static class CrudQlEndpointRouteBuilderExtensions
             return;
         }
 
+        var tenantConfigUpdate = registry.TenantFilterConfig;
+        if (tenantConfigUpdate != null)
+        {
+            var tenantFilter = CrudEntityExecutor.ResolveTenantFilter(context, registration, tenantConfigUpdate);
+            if (tenantFilter != null)
+                predicate = CrudEntityExecutor.CombinePredicates(registration.ClrType, predicate, tenantFilter);
+        }
+
         if (!CrudEntityExecutor.TryResolveDbContext(context, registration, out var dbContext, out error))
         {
             await error!.ExecuteAsync(context);
@@ -441,6 +466,16 @@ public static class CrudQlEndpointRouteBuilderExtensions
         {
             await Results.NotFound(new { message = $"Entity '{id}' was not found" }).ExecuteAsync(context);
             return;
+        }
+
+        var tenantConfigDelete = registry.TenantFilterConfig;
+        if (tenantConfigDelete != null)
+        {
+            if (!CrudEntityExecutor.VerifyTenantOwnership(context, entity, registration, tenantConfigDelete))
+            {
+                await Results.NotFound(new { message = $"Entity '{id}' was not found" }).ExecuteAsync(context);
+                return;
+            }
         }
 
         if (!CrudEntityExecutor.TryValidate(registration, CrudAction.Delete, entity, out error))
@@ -940,6 +975,65 @@ public static class CrudQlEndpointRouteBuilderExtensions
             }
 
             return softDeletePolicy.ResolveSoftDelete(CrudAction.Delete);
+        }
+
+        public static IQueryable ApplyExpressionFilter(IQueryable queryable, Type entityType, LambdaExpression filter)
+        {
+            var whereExpression = Expression.Call(
+                QueryableWhereMethod.MakeGenericMethod(entityType),
+                queryable.Expression,
+                filter);
+            return queryable.Provider.CreateQuery(whereExpression);
+        }
+
+        public static LambdaExpression? ResolveTenantFilter(
+            HttpContext context, CrudEntityRegistration registration, TenantFilterConfig config)
+        {
+            var tenantProperty = registration.ClrType.GetProperty(config.PropertyName);
+            if (tenantProperty == null)
+                return null;
+
+            var user = context.User;
+            var claim = user?.FindFirst(config.ClaimType);
+            if (claim == null || !int.TryParse(claim.Value, out var tenantId))
+                return null;
+
+            var parameter = Expression.Parameter(registration.ClrType, "entity");
+            var property = Expression.Property(parameter, tenantProperty);
+            var constant = Expression.Constant(tenantId);
+            var converted = Expression.Convert(constant, tenantProperty.PropertyType);
+            var condition = Expression.Equal(property, converted);
+            return Expression.Lambda(condition, parameter);
+        }
+
+        public static LambdaExpression CombinePredicates(Type entityType, LambdaExpression left, LambdaExpression right)
+        {
+            var parameter = Expression.Parameter(entityType, "entity");
+            var leftBody = new ParameterReplacer(left.Parameters[0], parameter).Visit(left.Body);
+            var rightBody = new ParameterReplacer(right.Parameters[0], parameter).Visit(right.Body);
+            var combined = Expression.AndAlso(leftBody, rightBody);
+            return Expression.Lambda(combined, parameter);
+        }
+
+        public static bool VerifyTenantOwnership(
+            HttpContext context, object entity, CrudEntityRegistration registration, TenantFilterConfig config)
+        {
+            var tenantProperty = registration.ClrType.GetProperty(config.PropertyName);
+            if (tenantProperty == null) return true;
+
+            var claim = context.User?.FindFirst(config.ClaimType);
+            if (claim == null || !int.TryParse(claim.Value, out var userTenantId)) return true;
+
+            var entityTenantId = tenantProperty.GetValue(entity);
+            return entityTenantId != null && (int)entityTenantId == userTenantId;
+        }
+
+        private class ParameterReplacer : ExpressionVisitor
+        {
+            private readonly ParameterExpression _from;
+            private readonly ParameterExpression _to;
+            public ParameterReplacer(ParameterExpression from, ParameterExpression to) { _from = from; _to = to; }
+            protected override Expression VisitParameter(ParameterExpression node) => node == _from ? _to : base.VisitParameter(node);
         }
 
         public static IQueryable ApplySoftDeleteFilter(IQueryable queryable, Type entityType, CrudSoftDeleteRule rule)
